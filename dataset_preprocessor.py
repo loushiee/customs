@@ -12,6 +12,7 @@ kENTRY = 'entry'
 kPREFCODE = 'prefcode'
 kCURRENCY = 'currency'
 kPORT = 'port'
+kSUBPORT = 'subport'
 CATEGORY = 'category'
 
 
@@ -107,6 +108,11 @@ class DatasetPreprocessor:
          return
 
       print('*** CLEANUP ***')
+      # Force categorical columns
+      self.make_categorical(kCOUNTRY_ORIGIN)
+      self.make_categorical(kCOUNTRY_EXPORT)
+      self.make_categorical(kCURRENCY)
+
       # 'prefcode' column: change "" values to "NOCODE" and convert 'prefcode' to categorical variable
       self.df_all[kPREFCODE].fillna('NOCODE', inplace=True)
       self.make_categorical(kPREFCODE)
@@ -117,6 +123,7 @@ class DatasetPreprocessor:
       self.df_all = self.df_all.loc[self.df_all[kENTRY].isin(['C', ''])]
       print(self.df_all[kENTRY].describe())
 
+      # hscode column cleanup
       # Check that 'hscode' strings are always 11 characters
       print('*** Cleanup hscode column ***')
       print(self.df_all[kHSCODE].str.len().describe())
@@ -125,19 +132,12 @@ class DatasetPreprocessor:
       # 15 Categories to exclude under Valuation Reforms 2014-2015
       # 7207, 7208, 7209, 7210, 7216, 7225, 7227, 7228, 1601, 1602, 3901, 3902, 3903, 3904, 3907
       regex_str = '^(7207|7208|7209|7210|7216|7225|7227|7228|1601|1602|3901|3902|3903|3904|3907)'
-      to_drop = self.df_all.loc[self.df_all[kHSCODE].str.contains(regex_str, regex=True)]
-      #to_drop.to_csv('./hscode_todrop.csv', columns=[kHSCODE])
-      to_drop_indices = to_drop.index
-      print(f'shape before cleanup: {self.df_all.shape}, indices count: {len(to_drop_indices)}')
+      matches = self.df_all[kHSCODE].str.contains(regex_str, regex=True)
+      to_drop_indices = matches[matches == True].index
+      #print(pd.api.types.is_list_like(to_drop_indices))
+      print(f'shape before cleanup: {self.df_all.shape}, match count: {to_drop_indices.size}')
       self.df_all = self.df_all.drop(index=to_drop_indices)
       print(f'shape after cleanup: {self.df_all.shape}')
-
-      # Force other categorical columns
-      self.make_categorical(kCOUNTRY_ORIGIN)
-      self.make_categorical(kCOUNTRY_EXPORT)
-      self.make_categorical(kCURRENCY)
-      self.make_categorical(kPORT)
-
       # Read files used for JOINING homogeneous reference-priced products
       rauch_sitc2 = pd.read_csv('./Rauch_classification_revised.txt', sep='\t',
                                 dtype={'sitc4': int, 'con': str, 'lib': str})
@@ -145,13 +145,34 @@ class DatasetPreprocessor:
                                  dtype={'From HS 2017': str, 'To SITC Rev. 2': int})
       # Inner join 2 read files
       merged_sitc2 = pd.merge(hs2017_sitc2, rauch_sitc2, how='left', left_on='To SITC Rev. 2', right_on='sitc4')
-      merged_sitc2.to_csv('./merged_sitc2.csv')
+      #merged_sitc2.to_csv('./merged_sitc2.csv')
       print(rauch_sitc2.describe(include='all'))
       print(hs2017_sitc2.describe(include='all'))
       print(merged_sitc2.describe(include='all'))
-      self.df_all = self.df_all.loc[self.df_all[kENTRY].isin(['C', ''])]
+      merged_str = merged_sitc2['From HS 2017'].str.cat(sep='|')
+      regex_str = f'^({merged_str})'
+      matches = self.df_all[kHSCODE].str.contains(regex_str, regex=True)
+      print(f'shape before cleanup: {self.df_all.shape}, matches count: {matches[matches == True].index.size}')
+      self.df_all = self.df_all.loc[matches]
+      print(f'shape after cleanup: {self.df_all.shape}')
 
-      # *** Utility functions ***
+      # For subport and port columns, change "" values to "Unknown" to indicate a new category
+      regex = r'^\s*$'
+      port_array = [kPORT, kSUBPORT]
+      for p in port_array:
+         print(f'*** Cleanup {p} column')
+         matches = self.df_all[p].str.contains(regex, regex=True)
+         count = matches[matches == True].index.size
+         print(f'{p} with empty values: {count}')
+         if count > 0:
+            self.df_all[kPORT].replace(regex, 'Unknown', regex=True, inplace=True)
+         self.make_categorical(p)
+      # Let's keep the top 10 ports
+
+
+      print('*** cleanup end ***')
+
+   # *** Utility functions ***
 
    # For checking if a value is a float
    def check_float(self, value):
