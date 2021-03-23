@@ -17,18 +17,24 @@ CATEGORY = 'category'
 
 
 class DatasetPreprocessor:
-   def __init__(self, force_read=False):
-      # Pickle file containing all datasets for all years
+   def __init__(self, force_read=False, force_cleanup=False):
+      # Pickle file containing datasets for all years
       self.boc_lite_all_file = './datasets/boc_lite_all_raw.pkl'
+      # Pickle file containing cleaned datasets for all years
+      self.boc_lite_cleaned_file = './datasets/boc_lite_cleaned.pkl'
 
       # Years to read
       self.years = np.array([2, 3, 4, 5, 6, 7], dtype=np.int) + 2010
+
+      if not force_cleanup and not os.path.exists(self.boc_lite_cleaned_file):
+         force_cleanup = True
 
       # If the pickle file is not present then read each csv file and save to the pickle file
       if force_read or not os.path.exists(self.boc_lite_all_file):
          self.df_all = self.read_all_years()
          self.df_all.to_pickle(self.boc_lite_all_file)
-      else:
+         force_cleanup = True
+      elif force_cleanup:
          self.df_all = pd.read_pickle(self.boc_lite_all_file)
 
       # print('*** dtypes before cleanup ***')
@@ -36,7 +42,11 @@ class DatasetPreprocessor:
       # print('*** summary before cleanup ***')
       # print(self.df_all.describe(include='all'))
 
-      self.cleanup()
+      if force_cleanup:
+         self.cleanup()
+         self.df_all.to_pickle(self.boc_lite_cleaned_file)
+      else:
+         self.df_all = pd.read_pickle(self.boc_lite_cleaned_file)
 
       print('*** dtypes after cleanup ***')
       print(self.df_all.dtypes)
@@ -168,9 +178,19 @@ class DatasetPreprocessor:
             self.df_all[kPORT].replace(regex, 'Unknown', regex=True, inplace=True)
          self.make_categorical(p)
       # Let's keep the top 10 ports
+      print('*** filter in the top 10 ports ***')
+      top_ports = self.df_all.groupby([kPORT]).size().sort_values(ascending=False)
+      print(top_ports)
+      print(top_ports.index)
+      top_ports_index = top_ports.index[:10]
+      print(top_ports_index)
+      print('*** port column before filtering ***')
+      print(self.df_all[kPORT].describe())
+      self.df_all = self.df_all.loc[self.df_all[kPORT].isin(top_ports_index)]
+      print('*** port column after filtering ***')
+      print(self.df_all[kPORT].describe())
 
-
-      print('*** cleanup end ***')
+      print('*** CLEANUP END ***')
 
    # *** Utility functions ***
 
@@ -191,4 +211,4 @@ class DatasetPreprocessor:
 
 
 if __name__ == "__main__":
-   pp = DatasetPreprocessor(force_read=False)
+   pp = DatasetPreprocessor(force_read=False, force_cleanup=False)
