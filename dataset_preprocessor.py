@@ -14,7 +14,8 @@ kCURRENCY = 'currency'
 kPORT = 'port'
 kSUBPORT = 'subport'
 CATEGORY = 'category'
-
+OTHERS = 'Others'
+UNKNOWN = 'Unknown'
 
 class DatasetPreprocessor:
    def __init__(self, force_read=False, force_cleanup=False):
@@ -177,8 +178,10 @@ class DatasetPreprocessor:
          if count > 0:
             self.df_all[kPORT].replace(regex, 'Unknown', regex=True, inplace=True)
          self.make_categorical(p)
-      # Let's keep the top 10 ports
-      print('*** filter in the top 10 ports ***')
+      self.df_all[kPORT] = self.df_all[kPORT].cat.add_categories([OTHERS, UNKNOWN])
+      # Let's keep the top 10 ports and group the remaining ports to just one 'Others' port
+      # Empty port values will be in 'Unknown'
+      print('*** filtering ports ***')
       top_ports = self.df_all.groupby([kPORT]).size().sort_values(ascending=False)
       print(top_ports)
       print(top_ports.index)
@@ -186,9 +189,13 @@ class DatasetPreprocessor:
       print(top_ports_index)
       print('*** port column before filtering ***')
       print(self.df_all[kPORT].describe())
-      self.df_all = self.df_all.loc[self.df_all[kPORT].isin(top_ports_index)]
+      print(f'shape: {self.df_all.shape}')
+      top_10_ports = self.df_all[kPORT].isin(top_ports_index)
+      self.df_all.loc[~top_10_ports & self.df_all[kPORT].notna(), kPORT] = OTHERS
+      self.df_all.loc[self.df_all[kPORT].isna(), kPORT] = UNKNOWN
       print('*** port column after filtering ***')
       print(self.df_all[kPORT].describe())
+      print(f'shape: {self.df_all.shape}')
 
       print('*** CLEANUP END ***')
 
@@ -211,4 +218,4 @@ class DatasetPreprocessor:
 
 
 if __name__ == "__main__":
-   pp = DatasetPreprocessor(force_read=False, force_cleanup=False)
+   pp = DatasetPreprocessor(force_read=False, force_cleanup=True)
