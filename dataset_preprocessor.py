@@ -6,6 +6,7 @@ pd.set_option('display.max_columns', 50)
 pd.set_option('display.width', 1000)
 
 kHSCODE = 'hscode'
+kHSCODE6 = 'hscode6'
 kCOUNTRY_ORIGIN = 'countryorigin_iso3'
 kCOUNTRY_EXPORT = 'countryexport_iso3'
 kENTRY = 'entry'
@@ -13,17 +14,26 @@ kPREFCODE = 'prefcode'
 kCURRENCY = 'currency'
 kPORT = 'port'
 kSUBPORT = 'subport'
+kTY = 'ty'
+kFOB = 'm_fob'
+kQ = 'q'
+kRPCT = 'r_pct'
+kR = 'r'
+kSUMV = 'sum_value'
+kSUMQ = 'sum_quantity'
 CATEGORY = 'category'
 OTHERS = 'Others'
 UNKNOWN = 'Unknown'
 
 class DatasetPreprocessor:
-   def __init__(self, force_read=False, force_cleanup=False):
+   def __init__(self, force_read=False, force_cleanup=False, compute_rpct=True):
       # Pickle file containing datasets for all years
       self.boc_lite_all_file = './datasets/boc_lite_all_raw.pkl'
       # Pickle file containing cleaned datasets for all years
       self.boc_lite_cleaned_file = './datasets/boc_lite_cleaned.pkl'
-
+      # Pickle file containing cleaned datasets for all years with computed r_pct and r
+      self.boc_lite_rpct_file = './datasets/boc_lite_rpct.pkl'
+      
       # Years to read
       self.years = np.array([2, 3, 4, 5, 6, 7], dtype=np.int) + 2010
 
@@ -38,21 +48,28 @@ class DatasetPreprocessor:
       elif force_cleanup:
          self.df_all = pd.read_pickle(self.boc_lite_all_file)
 
-      # print('*** dtypes before cleanup ***')
-      # print(self.df_all.dtypes)
-      # print('*** summary before cleanup ***')
-      # print(self.df_all.describe(include='all'))
-
+      # Perform data cleanup
       if force_cleanup:
+         print('*** dtypes before cleanup ***')
+         print(self.df_all.dtypes)
+         print('*** summary before cleanup ***')
+         print(self.df_all.describe(include='all'))
+         print(self.df_all.shape)
          self.cleanup()
          self.df_all.to_pickle(self.boc_lite_cleaned_file)
+         compute_rpct = True
       else:
          self.df_all = pd.read_pickle(self.boc_lite_cleaned_file)
-
       print('*** dtypes after cleanup ***')
       print(self.df_all.dtypes)
       print('*** summary after cleanup ***')
       print(self.df_all.describe(include='all'))
+      print(self.df_all.shape)
+
+      # Add the r and r_pct columns
+      if compute_rpct or not os.path.exists(self.boc_lite_rpct_file):
+         self.df_all_rpct = self.add_rpct()
+         self.df_all_rpct.to_pickle(self.boc_lite_rpct_file)
 
    # Reads all the datasets for all years
    def read_all_years(self):
@@ -139,7 +156,10 @@ class DatasetPreprocessor:
       print('*** Cleanup hscode column ***')
       print(self.df_all[kHSCODE].str.len().describe())
       # self.df_all[kHSCODE] = self.df_all[kHSCODE].str.pad(11, side='left', fillchar='0')
+      # Create a new hscode_6 column which is the first 6 digits of the hscode
+      self.df_all[kHSCODE6] = self.df_all[kHSCODE].str.slice(stop=6)
       self.make_categorical(kHSCODE)
+      self.make_categorical(kHSCODE6)
       # 15 Categories to exclude under Valuation Reforms 2014-2015
       # 7207, 7208, 7209, 7210, 7216, 7225, 7227, 7228, 1601, 1602, 3901, 3902, 3903, 3904, 3907
       regex_str = '^(7207|7208|7209|7210|7216|7225|7227|7228|1601|1602|3901|3902|3903|3904|3907)'
@@ -178,10 +198,10 @@ class DatasetPreprocessor:
          if count > 0:
             self.df_all[kPORT].replace(regex, 'Unknown', regex=True, inplace=True)
          self.make_categorical(p)
-      self.df_all[kPORT] = self.df_all[kPORT].cat.add_categories([OTHERS, UNKNOWN])
       # Let's keep the top 10 ports and group the remaining ports to just one 'Others' port
-      # Empty port values will be in 'Unknown'
+      # except for empty port values that will be in 'Unknown'
       print('*** filtering ports ***')
+      self.df_all[kPORT] = self.df_all[kPORT].cat.add_categories([OTHERS, UNKNOWN])
       top_ports = self.df_all.groupby([kPORT]).size().sort_values(ascending=False)
       print(top_ports)
       print(top_ports.index)
@@ -198,6 +218,29 @@ class DatasetPreprocessor:
       print(f'shape: {self.df_all.shape}')
 
       print('*** CLEANUP END ***')
+
+   # Compute r and r_pct and add to the cleaned data frame as columns
+   def add_rpct(self):
+      print('*** COMPUTE RPCT ***')
+      # Compute the r and r_pct for the 6 digit hscode, country and ty
+      df_rpct = self.df_all.groupby([kHSCODE6, kCOUNTRY_ORIGIN, kTY]).agg(sum_value=(kFOB, sum), sum_quantity=(kQ, sum))
+      df_rpct[kRPCT] = df_rpct[kSUMV] / df_rpct[kSUMQ]
+      df_rpct[kR] = df_rpct[kRPCT] * 0.7
+      df_rpct.drop(columns=[kSUMV, kSUMQ])
+      print(df_rpct.head())
+      print(df_rpct.index)
+      print(df_rpct.describe(include='all'))
+      print(df_rpct.shape)
+
+      # Inner join with the cleaned data to add the r and r_pct columns with the latter
+      print('*** Inner join to add r and r_pct columns ***')
+      df_rpct = df_rpct.drop(columns=[kSUMV, kSUMQ])
+      merged = pd.merge(self.df_all, df_rpct, how='inner', left_on=[kHSCODE6, kCOUNTRY_ORIGIN, kTY], left_index=False,
+                        right_on=df_rpct.index, right_index=True)
+      print(merged.describe(include='all'))
+      print(merged.shape)
+      print('*** END RPCT ***')
+      return merged
 
    # *** Utility functions ***
 
@@ -218,4 +261,4 @@ class DatasetPreprocessor:
 
 
 if __name__ == "__main__":
-   pp = DatasetPreprocessor(force_read=False, force_cleanup=True)
+   pp = DatasetPreprocessor(force_read=False, force_cleanup=False, compute_rpct=True)
