@@ -15,10 +15,11 @@ kCURRENCY = 'currency'
 kPORT = 'port'
 kSUBPORT = 'subport'
 kTY = 'ty'
+kTQ = 'tq'
+kTM = 'tm'
 kFOB = 'm_fob'
-kQ = 'q'
 kRPCT = 'r_pct'
-kR = 'r'
+kFRAUD = 'fraud'
 kSUMV = 'sum_value'
 kSUMQ = 'sum_quantity'
 CATEGORY = 'category'
@@ -68,8 +69,15 @@ class DatasetPreprocessor:
 
       # Add the r and r_pct columns
       if compute_rpct or not os.path.exists(self.boc_lite_rpct_file):
-         self.df_all_rpct = self.add_rpct()
-         self.df_all_rpct.to_pickle(self.boc_lite_rpct_file)
+         self.add_rpct()
+         self.df_all.to_pickle(self.boc_lite_rpct_file)
+      else:
+         self.df_all = pd.read_pickle(self.boc_lite_rpct_file)
+      print('*** summary after rpct ***')
+      print(self.df_all.describe(include='all'))
+      print(self.df_all.shape)
+
+      self.add_fraud_and_rates()
 
    # Reads all the datasets for all years
    def read_all_years(self):
@@ -140,6 +148,9 @@ class DatasetPreprocessor:
       self.make_categorical(kCOUNTRY_ORIGIN)
       self.make_categorical(kCOUNTRY_EXPORT)
       self.make_categorical(kCURRENCY)
+      self.make_categorical(kTY)
+      self.make_categorical(kTQ)
+      self.make_categorical(kTM)
 
       # 'prefcode' column: change "" values to "NOCODE" and convert 'prefcode' to categorical variable
       self.df_all[kPREFCODE].fillna('NOCODE', inplace=True)
@@ -223,9 +234,10 @@ class DatasetPreprocessor:
    def add_rpct(self):
       print('*** COMPUTE RPCT ***')
       # Compute the r and r_pct for the 6 digit hscode, country and ty
-      df_rpct = self.df_all.groupby([kHSCODE6, kCOUNTRY_ORIGIN, kTY]).agg(sum_value=(kFOB, sum), sum_quantity=(kQ, sum))
+      df_rpct = self.df_all.groupby([kHSCODE6, kCOUNTRY_ORIGIN, kTY]).agg(sum_value=(kFOB, sum), sum_quantity=('q', sum))
       df_rpct[kRPCT] = df_rpct[kSUMV] / df_rpct[kSUMQ]
-      df_rpct[kR] = df_rpct[kRPCT] * 0.7
+      df_rpct[kRPCT] = df_rpct[kRPCT].fillna(0)  # Some combinations of hscode/country/ty have 0 quantity
+      df_rpct['r'] = df_rpct[kRPCT] * 0.7
       df_rpct.drop(columns=[kSUMV, kSUMQ])
       print(df_rpct.head())
       print(df_rpct.index)
@@ -235,12 +247,21 @@ class DatasetPreprocessor:
       # Inner join with the cleaned data to add the r and r_pct columns with the latter
       print('*** Inner join to add r and r_pct columns ***')
       df_rpct = df_rpct.drop(columns=[kSUMV, kSUMQ])
-      merged = pd.merge(self.df_all, df_rpct, how='inner', left_on=[kHSCODE6, kCOUNTRY_ORIGIN, kTY], left_index=False,
-                        right_on=df_rpct.index, right_index=True)
-      print(merged.describe(include='all'))
-      print(merged.shape)
+      self.df_all = pd.merge(self.df_all, df_rpct, how='inner', left_on=[kHSCODE6, kCOUNTRY_ORIGIN, kTY],
+                             left_index=False, right_on=df_rpct.index, right_index=True)
+      print(self.df_all.describe(include='all'))
+      print(self.df_all.shape)
       print('*** END RPCT ***')
-      return merged
+
+   # Compute each transaction if fraud or not. Compute t, fta, cif_factor, vat_rate, duty_rate, exciseadv_rate
+   def add_fraud_and_rates(self):
+      print("*** COMPUTER FRAUD AND RATES  ***")
+      self.df_all[kFRAUD] = np.where(self.df_all['p'] < self.df_all['r'], 'Y', 'N')
+      self.make_categorical(kFRAUD)
+      print(self.df_all[kFRAUD].describe())
+      print(self.df_all[kFRAUD].value_counts())
+      print(self.df_all[kFRAUD].value_counts(normalize=True))
+
 
    # *** Utility functions ***
 
@@ -261,4 +282,4 @@ class DatasetPreprocessor:
 
 
 if __name__ == "__main__":
-   pp = DatasetPreprocessor(force_read=False, force_cleanup=False, compute_rpct=True)
+   pp = DatasetPreprocessor(force_read=False, force_cleanup=False, compute_rpct=False)
