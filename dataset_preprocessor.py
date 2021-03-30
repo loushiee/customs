@@ -17,14 +17,29 @@ kSUBPORT = 'subport'
 kTY = 'ty'
 kTQ = 'tq'
 kTM = 'tm'
+kQUART = 'quart'
 kFOB = 'm_fob'
+kVATPAID = 'vatpaid'
+kVATBASE = 'vatbase'
+kDUTYPAID = 'dutypaid'
+kDUTYVALUE = 'dutiablevaluephp'
+kEXCISEADV = 'exciseadvalorem'
 kRPCT = 'r_pct'
 kFRAUD = 'fraud'
 kSUMV = 'sum_value'
 kSUMQ = 'sum_quantity'
+kFTA = 'fta'
+kCIF = 'm_cif'
+kCIFFACTOR = 'm_cif_factor'
+kVATRATE = 'm_vat_rate'
+kDUTYRATE = 'm_duty_rate'
+kUID = 'uid'
+kEXCISERATE = 'm_exciseadv_rate'
+kTAXRATE = 'm_tax_rate'
 CATEGORY = 'category'
 OTHERS = 'Others'
 UNKNOWN = 'Unknown'
+NOCODE = 'NOCODE'
 
 class DatasetPreprocessor:
    def __init__(self, force_read=False, force_cleanup=False, compute_rpct=True):
@@ -152,9 +167,31 @@ class DatasetPreprocessor:
       self.make_categorical(kTQ)
       self.make_categorical(kTM)
 
+      # Extract the t column value from the UID, e.g. 201708 from 201708 00142228
+      self.df_all['t'] = self.df_all[kUID].map(lambda x: x.split()[0])
+      self.make_categorical('t')
+      # Add quart column
+      def get_q(t):
+         qq = t[4:6]
+         if t[4] == 'q':
+            return qq
+         elif qq == '01' or qq == '02' or qq == '03':
+            return 'q1'
+         elif qq == '04' or qq == '05' or qq == '06':
+            return 'q2'
+         elif qq == '07' or qq == '08' or qq == '09':
+            return 'q3'
+         else:
+            return 'q4'
+      self.df_all[kQUART] = self.df_all['t'].map(lambda x: get_q(x))
+      self.make_categorical(kQUART)
+
       # 'prefcode' column: change "" values to "NOCODE" and convert 'prefcode' to categorical variable
-      self.df_all[kPREFCODE].fillna('NOCODE', inplace=True)
+      self.df_all[kPREFCODE].fillna(NOCODE, inplace=True)
       self.make_categorical(kPREFCODE)
+      # Add fta column
+      self.df_all[kFTA] = np.where(self.df_all[kPREFCODE] != NOCODE, 1, 0)
+      self.make_categorical(kFTA)
 
       # Restrict the sample to consumption imports, as opposed to warehousing and transshipment
       # imports, because Philippine duties and taxes are levied on consumption imports under customs law.
@@ -207,7 +244,7 @@ class DatasetPreprocessor:
          count = matches[matches == True].index.size
          print(f'{p} with empty values: {count}')
          if count > 0:
-            self.df_all[kPORT].replace(regex, 'Unknown', regex=True, inplace=True)
+            self.df_all[kPORT].replace(regex, UNKNOWN, regex=True, inplace=True)
          self.make_categorical(p)
       # Let's keep the top 10 ports and group the remaining ports to just one 'Others' port
       # except for empty port values that will be in 'Unknown'
@@ -255,13 +292,21 @@ class DatasetPreprocessor:
 
    # Compute each transaction if fraud or not. Compute t, fta, cif_factor, vat_rate, duty_rate, exciseadv_rate
    def add_fraud_and_rates(self):
-      print("*** COMPUTER FRAUD AND RATES  ***")
+      print("*** COMPUTE FRAUD AND RATES  ***")
+      # Fraud if actual price is lower than reference price
       self.df_all[kFRAUD] = np.where(self.df_all['p'] < self.df_all['r'], 'Y', 'N')
       self.make_categorical(kFRAUD)
       print(self.df_all[kFRAUD].describe())
       print(self.df_all[kFRAUD].value_counts())
       print(self.df_all[kFRAUD].value_counts(normalize=True))
 
+      # Add m_cif_factor, m_vat_rate, m_duty_rate, m_exciseadv_rate
+      print(self.df_all[kFTA].value_counts(normalize=True))
+      self.df_all[kCIFFACTOR] = (self.df_all[kCIF] / self.df_all[kFOB]) - 1
+      self.df_all[kVATRATE] = (self.df_all[kVATPAID] / self.df_all[kVATBASE]) * 100
+      self.df_all[kDUTYRATE] = (self.df_all[kDUTYPAID] / self.df_all[kDUTYVALUE]) * 100
+      self.df_all[kEXCISERATE] = (self.df_all[kEXCISEADV] / self.df_all[kDUTYVALUE]) * 100
+      self.df_all[kTAXRATE] = self.df_all[kVATRATE] + self.df_all[kDUTYRATE]
 
    # *** Utility functions ***
 
