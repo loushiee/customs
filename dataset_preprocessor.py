@@ -9,6 +9,7 @@ kHSCODE = 'hscode'
 kHSCODE6 = 'hscode6'
 kCOUNTRY_ORIGIN = 'countryorigin_iso3'
 kCOUNTRY_EXPORT = 'countryexport_iso3'
+kCOUNTRY_ORIGINNAME = 'countryorigin_name'
 kENTRY = 'entry'
 kPREFCODE = 'prefcode'
 kCURRENCY = 'currency'
@@ -36,6 +37,8 @@ kDUTYRATE = 'm_duty_rate'
 kUID = 'uid'
 kEXCISERATE = 'm_exciseadv_rate'
 kTAXRATE = 'm_tax_rate'
+kLOSS = 'expected_loss'
+kSUBREGION = 'subregion'
 CATEGORY = 'category'
 OTHERS = 'Others'
 UNKNOWN = 'Unknown'
@@ -49,7 +52,9 @@ class DatasetPreprocessor:
       self.boc_lite_cleaned_file = './datasets/boc_lite_cleaned.pkl'
       # Pickle file containing cleaned datasets for all years with computed r_pct and r
       self.boc_lite_rpct_file = './datasets/boc_lite_rpct.pkl'
-      
+      # Pickle file containing cleaned datasets for all years after all preprocessing steps
+      self.boc_lite_final_file = './datasets/boc_lite_all_final.pkl'
+
       # Years to read
       self.years = np.array([2, 3, 4, 5, 6, 7], dtype=np.int) + 2010
 
@@ -88,11 +93,14 @@ class DatasetPreprocessor:
          self.df_all.to_pickle(self.boc_lite_rpct_file)
       else:
          self.df_all = pd.read_pickle(self.boc_lite_rpct_file)
-      print('*** summary after rpct ***')
+      self.add_fraud_and_rates()
+      self.add_subregion()
+      self.df_all.to_pickle(self.boc_lite_final_file)
+      print('*** final data summary ***')
+      print(self.df_all.dtypes)
+      print(self.df_all.head())
       print(self.df_all.describe(include='all'))
       print(self.df_all.shape)
-
-      self.add_fraud_and_rates()
 
    # Reads all the datasets for all years
    def read_all_years(self):
@@ -223,17 +231,14 @@ class DatasetPreprocessor:
       hs2017_sitc2 = pd.read_csv('./HS2017toSITC2ConversionAndCorrelationTables.txt', sep='\t',
                                  dtype={'From HS 2017': str, 'To SITC Rev. 2': int})
       # Inner join 2 read files
-      merged_sitc2 = pd.merge(hs2017_sitc2, rauch_sitc2, how='left', left_on='To SITC Rev. 2', right_on='sitc4')
+      merged_sitc2 = pd.merge(hs2017_sitc2, rauch_sitc2, how='inner', left_on='To SITC Rev. 2', right_on='sitc4')
       #merged_sitc2.to_csv('./merged_sitc2.csv')
       print(rauch_sitc2.describe(include='all'))
       print(hs2017_sitc2.describe(include='all'))
       print(merged_sitc2.describe(include='all'))
-      merged_str = merged_sitc2['From HS 2017'].str.cat(sep='|')
-      regex_str = f'^({merged_str})'
-      matches = self.df_all[kHSCODE].str.contains(regex_str, regex=True)
-      print(f'shape before cleanup: {self.df_all.shape}, matches count: {matches[matches == True].index.size}')
-      self.df_all = self.df_all.loc[matches]
-      print(f'shape after cleanup: {self.df_all.shape}')
+      print(f'shape before homogeneous cleanup: {self.df_all.shape}')
+      self.df_all = self.df_all.loc[self.df_all[kHSCODE6].isin(merged_sitc2['From HS 2017'])]
+      print(f'shape after homogeneous cleanup: {self.df_all.shape}')
 
       # For subport and port columns, change "" values to "Unknown" to indicate a new category
       regex = r'^\s*$'
@@ -296,7 +301,6 @@ class DatasetPreprocessor:
       # Fraud if actual price is lower than reference price
       self.df_all[kFRAUD] = np.where(self.df_all['p'] < self.df_all['r'], 'Y', 'N')
       self.make_categorical(kFRAUD)
-      print(self.df_all[kFRAUD].describe())
       print(self.df_all[kFRAUD].value_counts())
       print(self.df_all[kFRAUD].value_counts(normalize=True))
 
@@ -307,6 +311,50 @@ class DatasetPreprocessor:
       self.df_all[kDUTYRATE] = (self.df_all[kDUTYPAID] / self.df_all[kDUTYVALUE]) * 100
       self.df_all[kEXCISERATE] = (self.df_all[kEXCISEADV] / self.df_all[kDUTYVALUE]) * 100
       self.df_all[kTAXRATE] = self.df_all[kVATRATE] + self.df_all[kDUTYRATE]
+
+      # Add expected_loss
+      self.df_all[kLOSS] = (self.df_all['r'] * self.df_all['q'] * self.df_all['exchangerate'] * self.df_all[kTAXRATE] / 100) - (self.df_all[kDUTYPAID] + self.df_all[kVATPAID])
+      print(self.df_all[kLOSS].describe())
+      self.df_all.loc[self.df_all[kLOSS] < 0, kLOSS] = 0
+      print(self.df_all[kLOSS].describe())
+
+   # Add subregion for countryorigin_iso3
+   def add_subregion(self):
+      print('*** ADD SUBREGION AND COUNTRY ORIGIN NAME ***')
+      df_country = pd.read_csv('./all_country_iso3_region.csv', sep=',', quotechar='"', low_memory=False, encoding='latin_1')
+      print(df_country.head())
+      print(df_country.describe(include='all'))
+
+      # Inner Join. Drop some columns
+      self.df_all = pd.merge(self.df_all, df_country, how='inner', left_on=kCOUNTRY_ORIGIN, right_on='alpha-3')
+      self.df_all.rename(columns={'sub-region': 'subregion', 'name': kCOUNTRY_ORIGINNAME}, inplace=True)
+      self.df_all = self.df_all[["uid","ty","tq","tm","entry","hscode","hscode6","goodsdescription","p","q","m_fob","m_cif",
+                                 "fx_usd","dutiablevalueforeign","exchangerate","currency","dutiablevaluephp","dutypaid",
+                                 "exciseadvalorem","arrastre","wharfage","vatbase","vatpaid","othertax","finesandpenalties",
+                                 "dutiestaxes","prefcode","countryorigin_iso3","countryexport_iso3","countryorigin_name",
+                                 "subport","port","r_pct","r","fraud","t","fta","m_cif_factor","m_vat_rate",
+                                 "m_duty_rate","m_exciseadv_rate","m_tax_rate","quart","expected_loss","subregion"]]
+      self.make_categorical(kCOUNTRY_ORIGIN)
+      self.make_categorical(kCOUNTRY_ORIGINNAME)
+      print(self.df_all.describe(include='all'))
+      print(self.df_all.shape)
+
+      # Keep the top 10 subregions
+      print('*** filtering subregion ***')
+      top_subregions = self.df_all.groupby([kSUBREGION]).size().sort_values(ascending=False)
+      print(top_subregions)
+      print(top_subregions.index)
+      top_subregions_index = top_subregions.index[:10]
+      print(top_subregions_index)
+      print('*** subregion column before filtering ***')
+      print(self.df_all[kSUBREGION].describe())
+      print(f'shape: {self.df_all.shape}')
+      top_10_subregions = self.df_all[kSUBREGION].isin(top_subregions_index)
+      self.df_all.loc[~top_10_subregions & self.df_all[kSUBREGION].notna(), kSUBREGION] = OTHERS
+      self.df_all.loc[self.df_all[kSUBREGION].isna(), kSUBREGION] = UNKNOWN
+      print('*** subregion column after filtering ***')
+      self.make_categorical(kSUBREGION)
+      print(f'shape: {self.df_all.shape}')
 
    # *** Utility functions ***
 
@@ -328,3 +376,10 @@ class DatasetPreprocessor:
 
 if __name__ == "__main__":
    pp = DatasetPreprocessor(force_read=False, force_cleanup=False, compute_rpct=False)
+
+   print('*** GET 2017 DATA ***')
+   df_2017 = pp.df_all[pp.df_all[kTY] == 2017]
+   df_2017.to_pickle('./datasets/boc_lite_2017_final.pkl')
+   print(df_2017)
+   print(df_2017.describe(include='all'))
+   print(df_2017.shape)
