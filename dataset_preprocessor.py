@@ -44,7 +44,7 @@ OTHERS = 'Others'
 UNKNOWN = 'Unknown'
 NOCODE = 'NOCODE'
 
-class DatasetPreprocessor:
+class CustomsDatasetPreprocessor:
    def __init__(self, force_read=False, force_cleanup=False, compute_rpct=True):
       # Pickle file containing datasets for all years
       self.boc_lite_all_file = './datasets/boc_lite_all_raw.pkl'
@@ -311,6 +311,14 @@ class DatasetPreprocessor:
       self.df_all[kDUTYRATE] = (self.df_all[kDUTYPAID] / self.df_all[kDUTYVALUE]) * 100
       self.df_all[kEXCISERATE] = (self.df_all[kEXCISEADV] / self.df_all[kDUTYVALUE]) * 100
       self.df_all[kTAXRATE] = self.df_all[kVATRATE] + self.df_all[kDUTYRATE]
+      self.count_nan(kCIFFACTOR)
+      self.count_nan(kVATRATE)
+      self.count_nan(kDUTYRATE)
+      self.count_nan(kTAXRATE)
+      # exciseadvalorem (and therefore m_exciseadv_rate) has nan values. Change them to 0
+      self.count_nan(kEXCISERATE)
+      self.df_all[kEXCISERATE].fillna(0, inplace=True)
+      self.count_nan(kEXCISERATE)
 
       # Add expected_loss
       self.df_all[kLOSS] = (self.df_all['r'] * self.df_all['q'] * self.df_all['exchangerate'] * self.df_all[kTAXRATE] / 100) - (self.df_all[kDUTYPAID] + self.df_all[kVATPAID])
@@ -373,9 +381,13 @@ class DatasetPreprocessor:
       print(self.df_all[col_key].describe())
       print(self.df_all[col_key].cat.categories)
 
+   # Count number of nan in a column
+   def count_nan(self, col_key):
+       print(f'{col_key} nan count: {self.df_all[col_key].isnull().sum()}')
+
 
 if __name__ == "__main__":
-   pp = DatasetPreprocessor(force_read=False, force_cleanup=False, compute_rpct=False)
+   pp = CustomsDatasetPreprocessor(force_read=False, force_cleanup=False, compute_rpct=False)
 
    print('*** GET 2017 DATA ***')
    df_2017 = pp.df_all[pp.df_all[kTY] == 2017]
