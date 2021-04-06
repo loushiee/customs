@@ -94,6 +94,13 @@ class CustomsDataVisualizer:
       plt.rcParams["figure.figsize"] = [15, 15]
       self.df_num.plot(kind='box', subplots=True, layout=layout, sharex=False, sharey=False)
       plt.savefig(f'{self.output_folder}/boxnwhisker.png')
+      pdf = matplotlib.backends.backend_pdf.PdfPages(f'{self.output_folder}/boxnwhisker.pdf')
+      for i in self.df_num.columns:
+         # Adjust width based on number of categories
+         p = sns.catplot(data=self.df_all, x=kFRAUD, y=i, kind='box')
+         p.fig.set_size_inches(6, 6, forward=True)
+         pdf.savefig()
+      pdf.close()
 
       # Scatter plot matrix
       plt.rcParams["figure.figsize"] = [40, 40]
@@ -102,4 +109,6 @@ class CustomsDataVisualizer:
 
 
 if __name__ == "__main__":
-   viz = CustomsDataVisualizer('./datasets/boc_lite_2017_final.pkl', output_folder='./output')
+   CustomsDataVisualizer('./datasets/boc_lite_2017_final.pkl', output_folder='./output')
+   CustomsDataVisualizer('./datasets/boc_lite_2017_final2.pkl', output_folder='./output2')
+
