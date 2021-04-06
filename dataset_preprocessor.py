@@ -39,6 +39,7 @@ kEXCISERATE = 'm_exciseadv_rate'
 kTAXRATE = 'm_tax_rate'
 kLOSS = 'expected_loss'
 kSUBREGION = 'subregion'
+kFXUSD = 'fx_usd'
 CATEGORY = 'category'
 OTHERS = 'Others'
 UNKNOWN = 'Unknown'
@@ -115,12 +116,12 @@ class CustomsDatasetPreprocessor:
                 kPREFCODE: CATEGORY,
                 kCURRENCY: CATEGORY,
                 kPORT: CATEGORY,
-                'uid': str,
-                'dutiablevaluephp': np.float,
-                'dutypaid': np.float,
-                'exciseadvalorem': np.float,
-                'vatbase': np.float,
-                'vatpaid': np.float
+                kUID: str,
+                kDUTYVALUE: np.float,
+                kDUTYPAID: np.float,
+                kEXCISEADV: np.float,
+                kVATBASE: np.float,
+                kVATPAID: np.float
                 }
       df_list = list()
       for y in np.nditer(self.years):
@@ -253,23 +254,7 @@ class CustomsDatasetPreprocessor:
          self.make_categorical(p)
       # Let's keep the top 10 ports and group the remaining ports to just one 'Others' port
       # except for empty port values that will be in 'Unknown'
-      print('*** filtering ports ***')
-      self.df_all[kPORT] = self.df_all[kPORT].cat.add_categories([OTHERS, UNKNOWN])
-      top_ports = self.df_all.groupby([kPORT]).size().sort_values(ascending=False)
-      print(top_ports)
-      print(top_ports.index)
-      top_ports_index = top_ports.index[:10]
-      print(top_ports_index)
-      print('*** port column before filtering ***')
-      print(self.df_all[kPORT].describe())
-      print(f'shape: {self.df_all.shape}')
-      top_10_ports = self.df_all[kPORT].isin(top_ports_index)
-      self.df_all.loc[~top_10_ports & self.df_all[kPORT].notna(), kPORT] = OTHERS
-      self.df_all.loc[self.df_all[kPORT].isna(), kPORT] = UNKNOWN
-      print('*** port column after filtering ***')
-      print(self.df_all[kPORT].describe())
-      print(f'shape: {self.df_all.shape}')
-
+      self.df_all = self.use_top_n_only(self.df_all, col_name=kPORT, n=10)
       print('*** CLEANUP END ***')
 
    # Compute r and r_pct and add to the cleaned data frame as columns
@@ -348,21 +333,8 @@ class CustomsDatasetPreprocessor:
       print(self.df_all.shape)
 
       # Keep the top 10 subregions
-      print('*** filtering subregion ***')
-      top_subregions = self.df_all.groupby([kSUBREGION]).size().sort_values(ascending=False)
-      print(top_subregions)
-      print(top_subregions.index)
-      top_subregions_index = top_subregions.index[:10]
-      print(top_subregions_index)
-      print('*** subregion column before filtering ***')
-      print(self.df_all[kSUBREGION].describe())
-      print(f'shape: {self.df_all.shape}')
-      top_10_subregions = self.df_all[kSUBREGION].isin(top_subregions_index)
-      self.df_all.loc[~top_10_subregions & self.df_all[kSUBREGION].notna(), kSUBREGION] = OTHERS
-      self.df_all.loc[self.df_all[kSUBREGION].isna(), kSUBREGION] = UNKNOWN
-      print('*** subregion column after filtering ***')
+      self.df_all = self.use_top_n_only(self.df_all, col_name=kSUBREGION, n=10)
       self.make_categorical(kSUBREGION)
-      print(f'shape: {self.df_all.shape}')
 
    # *** Utility functions ***
 
@@ -385,13 +357,52 @@ class CustomsDatasetPreprocessor:
    def count_nan(self, col_key):
        print(f'{col_key} nan count: {self.df_all[col_key].isnull().sum()}')
 
+   # Remove outlier rows in input data. Data is outlier if outside the range [0, median + 2*std_dev]
+   def remove_outliers(self, df_in, col_name):
+      print(f'*** remove_outliers : {col_name} ***')
+      max_val = df_in[col_name].median() + (2 * df_in[col_name].std())
+      df_out = df_in.loc[df_in[col_name] <= max_val]
+      print(f'input shape : {df_in.shape}, output shape : {df_out.shape} ***')
+      return df_out
+
+   # Use top n values of a given column in input data. Non empty will use 'Others', empty will use 'Unknown'
+   def use_top_n_only(self, df_in, col_name, n):
+      print(f'*** use_top_n_only : {col_name} ***')
+      # Add Others and Unknown as categories
+      if df_in[col_name].dtype.name == 'category':
+         df_in[col_name].cat.add_categories([OTHERS, UNKNOWN], inplace=True)
+         print(df_in[col_name].cat.categories)
+      grouped = df_in.groupby(col_name).size().sort_values(ascending=False)
+      print(grouped)
+      print(grouped.index)
+      grouped_top_values = grouped.index[:n]
+      print(grouped_top_values)
+      print(f'*** {col_name} column before filtering ***')
+      print(df_in[col_name].describe())
+      print(f'shape: {df_in.shape}')
+      top_n = df_in[col_name].isin(grouped_top_values)
+      df_out = df_in
+      df_out.loc[~top_n & df_out[col_name].notna(), col_name] = OTHERS
+      df_out.loc[df_out[col_name].isna(), col_name] = UNKNOWN
+      print(f'*** {col_name} column after filtering ***')
+      print(f'shape: {df_out.shape}')
+      return df_out
+
 
 if __name__ == "__main__":
-   pp = CustomsDatasetPreprocessor(force_read=False, force_cleanup=False, compute_rpct=False)
+   pp = CustomsDatasetPreprocessor(force_read=False, force_cleanup=True, compute_rpct=False)
 
    print('*** GET 2017 DATA ***')
    df_2017 = pp.df_all[pp.df_all[kTY] == 2017]
    df_2017.to_pickle('./datasets/boc_lite_2017_final.pkl')
+   # Perform further cleaning of 2017 data
+   df_2017 = pp.remove_outliers(df_2017, kFXUSD)
+   df_2017 = pp.remove_outliers(df_2017, kEXCISERATE)
+   df_2017 = pp.remove_outliers(df_2017, kCIFFACTOR)
+   df_2017 = pp.remove_outliers(df_2017, 'q')
+   df_2017 = pp.use_top_n_only(df_2017, kCURRENCY, 5)
+   df_2017 = pp.use_top_n_only(df_2017, kPREFCODE, 5)
+   df_2017.to_pickle('./datasets/boc_lite_2017_final2.pkl')
    print(df_2017)
    print(df_2017.describe(include='all'))
    print(df_2017.shape)
