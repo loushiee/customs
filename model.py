@@ -9,10 +9,14 @@ from sklearn.model_selection import KFold, cross_validate, GridSearchCV, learnin
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import LabelBinarizer, OneHotEncoder, StandardScaler
 # Algorithms
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.neighbors import KNeighborsClassifier
-from sklearn.svm import SVC
+from sklearn.linear_model import LogisticRegression
+from sklearn.naive_bayes import GaussianNB
+from sklearn.neural_network import MLPClassifier
+from sklearn.svm import LinearSVC
 from sklearn.tree import DecisionTreeClassifier
+from xgboost import XGBClassifier
 
 pd.set_option('display.max_columns', 50)
 pd.set_option('display.width', 1000)
@@ -65,52 +69,64 @@ class CustomsDataModeler:
       num_cnvrtr = Pipeline([('num_imputer', SimpleImputer(strategy='constant')), ('num_scaler', StandardScaler())])
       col_xfrmr = ColumnTransformer([('cat_xfrmr', cat_cnvrtr, self.cat_features),
                                      ('num_xfrm', num_cnvrtr, self.num_features)])
-      X = col_xfrmr.fit_transform(X)
+      X = col_xfrmr.fit_transform(X).todense()
       split_array = train_test_split(X, y, test_size=0.2, random_state=self.rseed)
       self.X_train, self.X_test, self.y_train, self.y_test = split_array
 
    # Evaluate models
-   def evaluate_models(self, X, y, models, scoring_param='roc_auc', lcimage_prefix='learning_curve',
+   def evaluate_models(self, X, y, models, metrics=['roc_auc'], lcimage_prefix='learning_curve',
                        scoreimage_prefix='score', timeimage_prefix='time', outimage_prefix='algo_compare',
                        train_sizes=np.linspace(.1, 1.0, 5), n_jobs=-1, seed=1234):
       print('*** EVALUATE MODELS ***')
 
       plt.rcParams["figure.figsize"] = [10, 10]
 
-      test_score_results = list()
+      test_score_results = [list() for m in metrics]
       fit_time_results = list()
       names = list()
+      metrics_count = len(metrics)
 
       for i, (name, model) in enumerate(models):
          print(f'*** EVALUATING {name} ***')
          kfold = KFold(n_splits=self.nfolds)
+         names.append(name)
 
-         cv_results = cross_validate(model, X, y, cv=kfold, scoring=scoring_param, return_train_score=True)
-         train_score = cv_results['train_score']
-         test_score = cv_results['test_score']
+         cv_results = cross_validate(model, X, y, cv=kfold, scoring=metrics, return_train_score=True)
+         if metrics_count == 1:
+            train_scores = [cv_results['train_score']]
+            test_scores = [cv_results['test_score']]
+            print(f'{name}: {metrics[0]} training mean and std: {train_scores[0].mean():.3f} {train_scores[0].std():.3f}')
+            print(f'{name}: {metrics[0]} testing mean and std: {test_scores[0].mean():.3f} {test_scores[0].std():.3f}')
+            test_score_results[0].append(test_scores)
+         else:
+            train_scores = [cv_results[f'train_{m}'] for m in metrics]
+            test_scores = [cv_results[f'test_{m}'] for m in metrics]
+            for i in range(metrics_count):
+               print(f'{name}: {metrics[i]} training mean and std: {train_scores[i].mean():.3f} {train_scores[i].std():.3f}')
+               print(f'{name}: {metrics[i]} testing mean and std: {test_scores[i].mean():.3f} {test_scores[i].std():.3f}')
+               test_score_results[i].append(test_scores[i])
          fit_time = cv_results['fit_time']
          score_time = cv_results['score_time']
-         test_score_results.append(test_score)
          fit_time_results.append(fit_time)
-         names.append(name)
-         msg = f'{name}: {test_score.mean():.3f} {test_score.std():.3f}'
-         print(msg)
 
          # Generate score and time curve
-         plt.clf()
-         plt.title(f'Training and Validation Score Curve ({name})')
-         plt.xlabel("Split Index")
-         plt.ylabel("Score")
-         plt.grid()
-         plt.plot(range(train_score.size), train_score.tolist(), 'o-', color="g", label=f'Training score ({name})')
-         plt.plot(range(test_score.size), test_score.tolist(), 'o-', color="r", label=f'Validation score ({name})')
-         plt.legend(loc="best")
-         plt.savefig(f'{scoreimage_prefix}_{name}.png')
-         plt.clf()
+         for i in range(metrics_count):
+            plt.clf()
+            plt.title(f'Cross Validation "{metrics[i]}" Curves ({name})')
+            plt.xlabel('Split Index')
+            plt.xticks(np.arange(self.nfolds))
+            plt.ylabel(metrics[i])
+            plt.grid()
+            plt.plot(range(train_scores[i].size), train_scores[i].tolist(), 'o-', color="g", label=f'Training {metrics[i]} ({name})')
+            plt.plot(range(test_scores[i].size), test_scores[i].tolist(), 'o-', color="r", label=f'Testing {metrics[i]} ({name})')
+            plt.legend(loc="best")
+            plt.savefig(f'{self.output_folder}/{scoreimage_prefix}_{name}_{metrics[i]}.png')
+            plt.clf()
 
          plt.clf()
          plt.title(f'Fitting and Scoring Time Curve ({name})')
          plt.xlabel("Split Index")
+         plt.xticks(np.arange(self.nfolds))
          plt.ylabel("Seconds")
          plt.grid()
          plt.plot(range(fit_time.size), fit_time.tolist(), 'o-', color="g", label=f'Fitting time ({name})')
@@ -121,35 +137,36 @@ class CustomsDataModeler:
 
          # Generate learning curve
          lc = learning_curve(model, X, y, cv=kfold, n_jobs=n_jobs, train_sizes=train_sizes, shuffle=True)
-         train_sizes, train_scores, test_scores = lc
-         train_scores_mean = np.mean(train_scores, axis=1)
-         train_scores_std = np.std(train_scores, axis=1)
-         test_scores_mean = np.mean(test_scores, axis=1)
-         test_scores_std = np.std(test_scores, axis=1)
+         lc_train_sizes, lc_train_scores, lc_test_scores = lc
+         lc_train_scores_mean = np.mean(lc_train_scores, axis=1)
+         lc_train_scores_std = np.std(lc_train_scores, axis=1)
+         lc_test_scores_mean = np.mean(lc_test_scores, axis=1)
+         lc_test_scores_std = np.std(lc_test_scores, axis=1)
 
          plt.clf()
          plt.title(f'Learning Curve ({name})')
          plt.xlabel("Training examples")
          plt.ylabel("Score")
          plt.grid()
-         plt.fill_between(train_sizes, train_scores_mean - train_scores_std, train_scores_mean + train_scores_std,
+         plt.fill_between(lc_train_sizes, lc_train_scores_mean - lc_train_scores_std, lc_train_scores_mean + lc_train_scores_std,
                           alpha=0.1, color="r")
-         plt.fill_between(train_sizes, test_scores_mean - test_scores_std, test_scores_mean + test_scores_std,
+         plt.fill_between(lc_train_sizes, lc_test_scores_mean - lc_test_scores_std, lc_test_scores_mean + lc_test_scores_std,
                           alpha=0.1, color="g")
-         plt.plot(train_sizes, train_scores_mean, 'o-', color="r", label=f'Training score ({name})')
-         plt.plot(train_sizes, test_scores_mean, 'o-', color="g", label=f'Cross-validation score ({name})')
+         plt.plot(lc_train_sizes, lc_train_scores_mean, 'o-', color="r", label=f'Training score ({name})')
+         plt.plot(lc_train_sizes, lc_test_scores_mean, 'o-', color="g", label=f'Testing score ({name})')
          plt.legend(loc="best")
          plt.savefig(f'{self.output_folder}/{lcimage_prefix}_{name}.png')
          plt.clf()
 
       # Compare models
-      fig = plt.figure()
-      fig.suptitle('Cross Validation Score Comparison')
-      ax = fig.add_subplot(111)
-      plt.boxplot(test_score_results)
-      ax.set_xticklabels(names)
-      plt.savefig(f'{self.output_folder}/{outimage_prefix}.png')
-      plt.clf()
+      for i in range(metrics_count):
+         fig = plt.figure()
+         fig.suptitle(f'Cross Validation "{metrics[i]}" Score Comparison')
+         ax = fig.add_subplot(111)
+         plt.boxplot(test_score_results[i])
+         ax.set_xticklabels(names)
+         plt.savefig(f'{self.output_folder}/{outimage_prefix}_{metrics[i]}.png')
+         plt.clf()
 
       fig = plt.figure()
       fig.suptitle('Cross Validation Fit Time Comparison')
@@ -161,16 +178,21 @@ class CustomsDataModeler:
 
    # Spot check the models for checking the default performance
    def spot_check_models(self):
-      model_list = [#('KNN', KNeighborsClassifier()),
-                    # ('SVM', SVC(gamma='auto')),
+      model_list = [('LSVM', LinearSVC(dual=False)),
+                    ('LDA', LinearDiscriminantAnalysis()),
+                    ('LR_Lasso', LogisticRegression(penalty='l1', solver='liblinear')),
+                    ('LR_Ridge', LogisticRegression(penalty='l2', solver='liblinear')),
+                    ('NB', GaussianNB()),
+                    ('XGB', XGBClassifier(use_label_encoder=False)),
+                    ('MLP', MLPClassifier(max_iter=500, early_stopping=True)),
                     ('DT', DecisionTreeClassifier()),
-                    ('RF', RandomForestClassifier())
+                    ('RF', RandomForestClassifier()),
                     ]
-      self.evaluate_models(self.X_train, self.y_train, model_list, lcimage_prefix='spot_lc',
+      self.evaluate_models(self.X_train, self.y_train, model_list, metrics=['roc_auc', 'f1', 'accuracy'], lcimage_prefix='spot_lc',
                            scoreimage_prefix='spot_score', timeimage_prefix='spot_time', outimage_prefix='spot')
 
 
 if __name__ == "__main__":
-   modeler = CustomsDataModeler('./datasets/boc_lite_2017_final2.pkl', output_folder='./model_output', nfolds=5)
+   modeler = CustomsDataModeler('./datasets/boc_lite_2017_final2.pkl', output_folder='./model_output2', nfolds=5)
    modeler.spot_check_models()
 
