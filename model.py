@@ -10,7 +10,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import LabelBinarizer, OneHotEncoder, StandardScaler
 # Algorithms
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import AdaBoostClassifier, GradientBoostingClassifier, RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.naive_bayes import GaussianNB
 from sklearn.neural_network import MLPClassifier
@@ -74,12 +74,14 @@ class CustomsDataModeler:
       self.X_train, self.X_test, self.y_train, self.y_test = split_array
 
    # Evaluate models
-   def evaluate_models(self, X, y, models, metrics=['roc_auc'], lcimage_prefix='learning_curve',
+   def evaluate_models(self, X, y, models, metrics=None, lcimage_prefix='learning_curve',
                        scoreimage_prefix='score', timeimage_prefix='time', outimage_prefix='algo_compare',
                        train_sizes=np.linspace(.1, 1.0, 5), n_jobs=-1, seed=1234):
+      if metrics is None:
+         metrics = ['roc_auc']
       print('*** EVALUATE MODELS ***')
 
-      plt.rcParams["figure.figsize"] = [10, 10]
+      plt.rcParams["figure.figsize"] = [max(len(models) * 1.5, 10), 10]
 
       test_score_results = [list() for m in metrics]
       fit_time_results = list()
@@ -135,36 +137,40 @@ class CustomsDataModeler:
          plt.savefig(f'{self.output_folder}/{timeimage_prefix}_{name}.png')
          plt.clf()
 
-         # Generate learning curve
-         lc = learning_curve(model, X, y, cv=kfold, n_jobs=n_jobs, train_sizes=train_sizes, shuffle=True)
-         lc_train_sizes, lc_train_scores, lc_test_scores = lc
-         lc_train_scores_mean = np.mean(lc_train_scores, axis=1)
-         lc_train_scores_std = np.std(lc_train_scores, axis=1)
-         lc_test_scores_mean = np.mean(lc_test_scores, axis=1)
-         lc_test_scores_std = np.std(lc_test_scores, axis=1)
+         if lcimage_prefix is not None:
+            # Generate learning curve
+            lc = learning_curve(model, X, y, cv=kfold, n_jobs=n_jobs, train_sizes=train_sizes, shuffle=True)
+            lc_train_sizes, lc_train_scores, lc_test_scores = lc
+            lc_train_scores_mean = np.mean(lc_train_scores, axis=1)
+            lc_train_scores_std = np.std(lc_train_scores, axis=1)
+            lc_test_scores_mean = np.mean(lc_test_scores, axis=1)
+            lc_test_scores_std = np.std(lc_test_scores, axis=1)
 
-         plt.clf()
-         plt.title(f'Learning Curve ({name})')
-         plt.xlabel("Training examples")
-         plt.ylabel("Score")
-         plt.grid()
-         plt.fill_between(lc_train_sizes, lc_train_scores_mean - lc_train_scores_std, lc_train_scores_mean + lc_train_scores_std,
-                          alpha=0.1, color="r")
-         plt.fill_between(lc_train_sizes, lc_test_scores_mean - lc_test_scores_std, lc_test_scores_mean + lc_test_scores_std,
-                          alpha=0.1, color="g")
-         plt.plot(lc_train_sizes, lc_train_scores_mean, 'o-', color="r", label=f'Training score ({name})')
-         plt.plot(lc_train_sizes, lc_test_scores_mean, 'o-', color="g", label=f'Testing score ({name})')
-         plt.legend(loc="best")
-         plt.savefig(f'{self.output_folder}/{lcimage_prefix}_{name}.png')
-         plt.clf()
+            plt.clf()
+            plt.title(f'Learning Curve ({name})')
+            plt.xlabel("Training examples")
+            plt.ylabel("Score")
+            plt.grid()
+            plt.fill_between(lc_train_sizes, lc_train_scores_mean - lc_train_scores_std,
+                             lc_train_scores_mean + lc_train_scores_std,
+                             alpha=0.1, color="r")
+            plt.fill_between(lc_train_sizes, lc_test_scores_mean - lc_test_scores_std,
+                             lc_test_scores_mean + lc_test_scores_std,
+                             alpha=0.1, color="g")
+            plt.plot(lc_train_sizes, lc_train_scores_mean, 'o-', color="r", label=f'Training score ({name})')
+            plt.plot(lc_train_sizes, lc_test_scores_mean, 'o-', color="g", label=f'Testing score ({name})')
+            plt.legend(loc="best")
+            plt.savefig(f'{self.output_folder}/{lcimage_prefix}_{name}.png')
+            plt.clf()
 
       # Compare models
       for i in range(metrics_count):
          fig = plt.figure()
-         fig.suptitle(f'Cross Validation "{metrics[i]}" Score Comparison')
+         fig.suptitle(f'Testing "{metrics[i]}" Score Comparison')
          ax = fig.add_subplot(111)
          plt.boxplot(test_score_results[i])
          ax.set_xticklabels(names)
+         ax.set_ylabel(metrics[i])
          plt.savefig(f'{self.output_folder}/{outimage_prefix}_{metrics[i]}.png')
          plt.clf()
 
@@ -173,26 +179,31 @@ class CustomsDataModeler:
       ax = fig.add_subplot(111)
       plt.boxplot(fit_time_results)
       ax.set_xticklabels(names)
+      ax.set_ylabel('Seconds')
       plt.savefig(f'{self.output_folder}/{timeimage_prefix}.png')
       plt.clf()
 
    # Spot check the models for checking the default performance
    def spot_check_models(self):
-      model_list = [('LSVM', LinearSVC(dual=False)),
+      model_list = [('LinearSVM', LinearSVC(dual=False)),
                     ('LDA', LinearDiscriminantAnalysis()),
                     ('LR_Lasso', LogisticRegression(penalty='l1', solver='liblinear')),
                     ('LR_Ridge', LogisticRegression(penalty='l2', solver='liblinear')),
-                    ('NB', GaussianNB()),
-                    ('XGB', XGBClassifier(use_label_encoder=False)),
-                    ('MLP', MLPClassifier(max_iter=500, early_stopping=True)),
-                    ('DT', DecisionTreeClassifier()),
-                    ('RF', RandomForestClassifier()),
+                    ('NaiveBayes', GaussianNB()),
+                    ('AdaBoost', AdaBoostClassifier()),
+                    ('GradientBoost', GradientBoostingClassifier()),
+                    ('XGBoost', XGBClassifier(use_label_encoder=False)),
+                    ('NeuralNetwork', MLPClassifier(max_iter=500, early_stopping=True)),
+                    ('DecisionTree', DecisionTreeClassifier()),
+                    ('RandomForest', RandomForestClassifier()),
                     ]
-      self.evaluate_models(self.X_train, self.y_train, model_list, metrics=['roc_auc', 'f1', 'accuracy'], lcimage_prefix='spot_lc',
-                           scoreimage_prefix='spot_score', timeimage_prefix='spot_time', outimage_prefix='spot')
+      self.evaluate_models(self.X_train, self.y_train, model_list,
+                           metrics=['roc_auc', 'f1', 'accuracy', 'precision', 'recall'],
+                           scoreimage_prefix='spot_score', timeimage_prefix='spot_time', outimage_prefix='spot',
+                           lcimage_prefix=None)
 
 
 if __name__ == "__main__":
-   modeler = CustomsDataModeler('./datasets/boc_lite_2017_final2.pkl', output_folder='./model_output2', nfolds=5)
+   modeler = CustomsDataModeler('./datasets/boc_lite_2017_final2.pkl', output_folder='./model_output5', nfolds=10)
    modeler.spot_check_models()
 
