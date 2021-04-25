@@ -3,9 +3,10 @@ import os
 import numpy as np
 import pandas as pd
 
-from sklearn.compose import ColumnTransformer, make_column_selector
+# From sklearn
+from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
-from sklearn.model_selection import KFold, cross_validate, GridSearchCV, learning_curve, train_test_split
+from sklearn.model_selection import KFold, cross_validate, GridSearchCV, RepeatedStratifiedKFold, learning_curve, train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import LabelBinarizer, OneHotEncoder, StandardScaler
 # Algorithms
@@ -16,14 +17,19 @@ from sklearn.naive_bayes import GaussianNB
 from sklearn.neural_network import MLPClassifier
 from sklearn.svm import LinearSVC
 from sklearn.tree import DecisionTreeClassifier
+
+# Other ML packages
 from xgboost import XGBClassifier
+from imblearn.over_sampling import SMOTENC
+from imblearn.pipeline import Pipeline as ImblearnPipeline
+from imblearn.under_sampling import RandomUnderSampler
 
 pd.set_option('display.max_columns', 50)
 pd.set_option('display.width', 1000)
 
 
 class CustomsDataModeler:
-   def __init__(self, pickle_file, output_folder, nfolds=10):
+   def __init__(self, pickle_file, output_folder, nfolds=10, nrepeats=1, oversampling_ratio=None, undersampling_ratio=None):
       if not os.path.exists(pickle_file):
          print(f'File not found: {pickle_file}')
          exit()
@@ -35,12 +41,17 @@ class CustomsDataModeler:
 
       self.pickle_file = pickle_file  # Dataset to read and visualize
       self.nfolds = nfolds
+      self.nrepeats = nrepeats
+      self.oversampling_ratio = oversampling_ratio
+      self.undersampling_ratio = undersampling_ratio
       self.df_all = None
       self.cat_features = list()  # Categorical features
       self.num_features = list()  # Numeric features
       self.X_train = None
+      self.X_val = None
       self.X_test = None
       self.y_train = None
+      self.y_val = None
       self.y_test = None
       self.rseed = 12345
 
@@ -58,25 +69,48 @@ class CustomsDataModeler:
       print(self.df_all.describe(include='all'))
       print(self.df_all.info())
 
-      # Split data to train and test datasets. Encode the binary 'fraud' target first
+      # Split data to train, validation and test datasets. 70% train, 10% validation, 20% test
+      # Encode the binary 'fraud' target first
       X = self.df_all.drop(columns=['fraud'])
       y = LabelBinarizer().fit_transform(df['fraud']).flatten()
+      split_array = train_test_split(X, y, test_size=0.3, stratify=y, random_state=self.rseed)
+      self.X_train, self.X_test, self.y_train, self.y_test = split_array
+      split_array = train_test_split(self.X_test, self.y_test, test_size=2.0/3.0, stratify=y, random_state=self.rseed)
+      self.X_val, self.X_test, self.y_val, self.y_test = split_array
 
-      # One hot encode categorical features and scale numerical features
       self.cat_features = X.select_dtypes(include=['category']).columns
       self.num_features = X.select_dtypes(exclude=['category']).columns
+
+      # Perform oversampling to overcome imbalanced nature of the dataset, i.e. ~21% is classified as 'fraud'
+      pipe_steps = list()
+      if self.oversampling_ratio is not None:
+         print(f'Oversampling ratio: {self.oversampling_ratio}')
+         cat_features_indices = X.columns.get_indexer(self.cat_features)
+         over_sampler = SMOTENC(categorical_features=cat_features_indices, sampling_strategy=self.oversampling_ratio)
+         pipe_steps.append(('over_sampler', over_sampler))
+      if self.undersampling_ratio is not None:
+         print(f'Undersampling ratio: {self.undersampling_ratio}')
+         under_sampler = RandomUnderSampler(sampling_strategy=self.undersampling_ratio)
+         pipe_steps.append(('under_sampler', under_sampler))
+      sampler_pipe = ImblearnPipeline(pipe_steps)
+      self.X_train, self.y_train = sampler_pipe.fit_resample(self.X_train, self.y_train)
+      npos_y = np.count_nonzero(self.y_train)
+      nneg_y = self.y_train.size - npos_y
+      print(f'Target ratio after sampling (positive / negative): {npos_y} / {nneg_y} = {100.0 * npos_y / nneg_y:.3f}')
+
+      # One hot encode categorical features and scale numerical features
       cat_cnvrtr = OneHotEncoder(drop='first', handle_unknown='error')
       num_cnvrtr = Pipeline([('num_imputer', SimpleImputer(strategy='constant')), ('num_scaler', StandardScaler())])
       col_xfrmr = ColumnTransformer([('cat_xfrmr', cat_cnvrtr, self.cat_features),
                                      ('num_xfrm', num_cnvrtr, self.num_features)])
-      X = col_xfrmr.fit_transform(X).todense()
-      split_array = train_test_split(X, y, test_size=0.2, random_state=self.rseed)
-      self.X_train, self.X_test, self.y_train, self.y_test = split_array
+      self.X_train = col_xfrmr.fit_transform(self.X_train).todense()
+      self.X_val = col_xfrmr.transform(self.X_val).todense()
+      self.X_test = col_xfrmr.transform(self.X_test).todense()
 
    # Evaluate models
    def evaluate_models(self, X, y, models, metrics=None, lcimage_prefix='learning_curve',
                        scoreimage_prefix='score', timeimage_prefix='time', outimage_prefix='algo_compare',
-                       train_sizes=np.linspace(.1, 1.0, 5), n_jobs=-1, seed=1234):
+                       train_sizes=np.linspace(.1, 1.0, 5), n_jobs=-1):
       if metrics is None:
          metrics = ['roc_auc']
       print('*** EVALUATE MODELS ***')
@@ -93,7 +127,8 @@ class CustomsDataModeler:
          kfold = KFold(n_splits=self.nfolds)
          names.append(name)
 
-         cv_results = cross_validate(model, X, y, cv=kfold, scoring=metrics, return_train_score=True)
+         rskf = RepeatedStratifiedKFold(n_splits=self.nfolds, n_repeats=self.nrepeats)
+         cv_results = cross_validate(model, X, y, cv=rskf, scoring=metrics, return_train_score=True)
          if metrics_count == 1:
             train_scores = [cv_results['train_score']]
             test_scores = [cv_results['test_score']]
@@ -116,8 +151,9 @@ class CustomsDataModeler:
             plt.clf()
             plt.title(f'Cross Validation "{metrics[i]}" Curves ({name})')
             plt.xlabel('Split Index')
-            plt.xticks(np.arange(self.nfolds))
+            plt.xticks(np.arange(self.nfolds * self.nrepeats))
             plt.ylabel(metrics[i])
+            plt.ylim([0, 1])
             plt.grid()
             plt.plot(range(train_scores[i].size), train_scores[i].tolist(), 'o-', color="g", label=f'Training {metrics[i]} ({name})')
             plt.plot(range(test_scores[i].size), test_scores[i].tolist(), 'o-', color="r", label=f'Testing {metrics[i]} ({name})')
@@ -128,7 +164,7 @@ class CustomsDataModeler:
          plt.clf()
          plt.title(f'Fitting and Scoring Time Curve ({name})')
          plt.xlabel("Split Index")
-         plt.xticks(np.arange(self.nfolds))
+         plt.xticks(np.arange(self.nfolds * self.nrepeats))
          plt.ylabel("Seconds")
          plt.grid()
          plt.plot(range(fit_time.size), fit_time.tolist(), 'o-', color="g", label=f'Fitting time ({name})')
@@ -204,6 +240,7 @@ class CustomsDataModeler:
 
 
 if __name__ == "__main__":
-   modeler = CustomsDataModeler('./datasets/boc_lite_2017_final2.pkl', output_folder='./model_output5', nfolds=10)
+   modeler = CustomsDataModeler('./datasets/boc_lite_2017_final2.pkl', output_folder='./model_output_0607', nfolds=10,
+                                nrepeats=3, oversampling_ratio=0.6, undersampling_ratio=0.7)
    modeler.spot_check_models()
 
