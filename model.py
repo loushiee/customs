@@ -2,10 +2,12 @@ import matplotlib.pyplot as plt
 import os
 import numpy as np
 import pandas as pd
+import time
 
 # From sklearn
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, f1_score, precision_score, recall_score, roc_auc_score, roc_curve
 from sklearn.model_selection import KFold, cross_validate, GridSearchCV, RepeatedStratifiedKFold, learning_curve, train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import LabelBinarizer, OneHotEncoder, StandardScaler
@@ -75,8 +77,12 @@ class CustomsDataModeler:
       y = LabelBinarizer().fit_transform(df['fraud']).flatten()
       split_array = train_test_split(X, y, test_size=0.3, stratify=y, random_state=self.rseed)
       self.X_train, self.X_test, self.y_train, self.y_test = split_array
-      split_array = train_test_split(self.X_test, self.y_test, test_size=2.0/3.0, stratify=y, random_state=self.rseed)
+      split_array = train_test_split(self.X_test, self.y_test, test_size=2.0/3.0, stratify=self.y_test, random_state=self.rseed)
       self.X_val, self.X_test, self.y_val, self.y_test = split_array
+      print('Train, Validation, Test split')
+      print(f'X train: {self.X_train.shape}, y train: {self.y_train.shape}')
+      print(f'X validation: {self.X_val.shape}, y validation: {self.y_val.shape}')
+      print(f'X test: {self.X_test.shape}, y test: {self.y_test.shape}')
 
       self.cat_features = X.select_dtypes(include=['category']).columns
       self.num_features = X.select_dtypes(exclude=['category']).columns
@@ -92,11 +98,12 @@ class CustomsDataModeler:
          print(f'Undersampling ratio: {self.undersampling_ratio}')
          under_sampler = RandomUnderSampler(sampling_strategy=self.undersampling_ratio)
          pipe_steps.append(('under_sampler', under_sampler))
-      sampler_pipe = ImblearnPipeline(pipe_steps)
-      self.X_train, self.y_train = sampler_pipe.fit_resample(self.X_train, self.y_train)
-      npos_y = np.count_nonzero(self.y_train)
-      nneg_y = self.y_train.size - npos_y
-      print(f'Target ratio after sampling (positive / negative): {npos_y} / {nneg_y} = {100.0 * npos_y / nneg_y:.3f}')
+      if len(pipe_steps) > 0:
+         sampler_pipe = ImblearnPipeline(pipe_steps)
+         self.X_train, self.y_train = sampler_pipe.fit_resample(self.X_train, self.y_train)
+         npos_y = np.count_nonzero(self.y_train)
+         nneg_y = self.y_train.size - npos_y
+         print(f'Target ratio after sampling (positive / negative): {npos_y} / {nneg_y} = {100.0 * npos_y / nneg_y:.3f}')
 
       # One hot encode categorical features and scale numerical features
       cat_cnvrtr = OneHotEncoder(drop='first', handle_unknown='error')
@@ -111,9 +118,9 @@ class CustomsDataModeler:
    def evaluate_models(self, X, y, models, metrics=None, lcimage_prefix='learning_curve',
                        scoreimage_prefix='score', timeimage_prefix='time', outimage_prefix='algo_compare',
                        train_sizes=np.linspace(.1, 1.0, 5), n_jobs=-1):
+      print('*** EVALUATE MODELS ***')
       if metrics is None:
          metrics = ['roc_auc']
-      print('*** EVALUATE MODELS ***')
 
       plt.rcParams["figure.figsize"] = [max(len(models) * 1.5, 10), 10]
 
@@ -219,11 +226,46 @@ class CustomsDataModeler:
       plt.savefig(f'{self.output_folder}/{timeimage_prefix}.png')
       plt.clf()
 
+   # Perform testing of models using provided test data and target
+   def test_models(self, model_list, report_file, use_validation_dataset=False):
+      X = self.X_val if use_validation_dataset else self.X_test
+      y = self.y_val if use_validation_dataset else self.y_test
+      f = open(f'{self.output_folder}/{report_file}', 'w')
+      f.write("X shape:{} y shape:{}\n\n".format(X.shape, y.shape))
+
+      for i, (name, model) in enumerate(model_list):
+         print(f'*** TESTING {name} ***')
+         start = time.time()
+         pred = model.predict(X)
+         runtime = time.time() - start
+         f.write(f'*** {name} SUMMARY ***\n')
+         f.write(f'{name} Model details:\n{model}\n')
+         f.write(f'{name} Runtime (ms): {runtime * 1000.:.3f}\n')
+         f.write(f'{name} ROC_AUC: {roc_auc_score(y, pred) * 100.:.3f}\n')
+         f.write(f'{name} F1: {f1_score(y, pred) * 100.:.3f}\n')
+         f.write(f'{name} Accuracy: {accuracy_score(y, pred) * 100.:.3f}\n')
+         f.write(f'{name} Precision: {precision_score(y, pred) * 100.:.3f}\n')
+         f.write(f'{name} Recall: {recall_score(y, pred) * 100.:.3f}\n')
+         f.write(f'{name} Confusion matrix:\n{confusion_matrix(y, pred)}\n')
+         f.write(f'{name} Classification report:\n{classification_report(y, pred)}\n')
+
+   # Tune a model's hyper parameters using grid search
+   def grid_search_model(self, model, param_grid, X, y, metrics=None):
+      print('*** GRID SEARCH MODEL ***')
+      if metrics is None:
+         metrics = ['roc_auc']
+
+      rskf = RepeatedStratifiedKFold(n_splits=self.nfolds)
+      grid = GridSearchCV(estimator=model, param_grid=param_grid, scoring=metrics, cv=rskf, refit=metrics[0],
+                          n_jobs=-1, return_train_score=True)
+      grid_result = grid.fit(X, y)
+      print("Non nested best score: {:.3f} using param: {}".format(grid_result.best_score_, grid_result.best_params_))
+      return grid
+
    # Spot check the models for checking the default performance
    def spot_check_models(self):
       model_list = [('LinearSVM', LinearSVC(dual=False)),
                     ('LDA', LinearDiscriminantAnalysis()),
-                    ('LR_Lasso', LogisticRegression(penalty='l1', solver='liblinear')),
                     ('LR_Ridge', LogisticRegression(penalty='l2', solver='liblinear')),
                     ('NaiveBayes', GaussianNB()),
                     ('AdaBoost', AdaBoostClassifier()),
@@ -238,9 +280,29 @@ class CustomsDataModeler:
                            scoreimage_prefix='spot_score', timeimage_prefix='spot_time', outimage_prefix='spot',
                            lcimage_prefix=None)
 
+   # Tune top performing models from spot checking
+   def tune_models(self):
+      tuned_models = list()
+
+      # Tune Decision Tree
+      print("*** TUNE Decision Tree ***")
+      criterion = ["gini", "entropy"]
+      max_depth = [10, 15, 20, 30, None]
+      max_features = ['sqrt', 'log2', None]
+      param_grid = dict({'criterion': criterion, 'max_depth': max_depth, 'max_features': max_features})
+      dt_result = self.grid_search_model(DecisionTreeClassifier(), param_grid, X=self.X_train, y=self.y_train,
+                                         metrics=['roc_auc', 'f1'])
+      dt_tuned = dt_result.best_estimator_
+      tuned_models.append(('Decision Tree', dt_tuned))
+      print(dt_result.cv_results_)
+
+      return tuned_models
+
 
 if __name__ == "__main__":
-   modeler = CustomsDataModeler('./datasets/boc_lite_2017_final2.pkl', output_folder='./model_output_0607', nfolds=10,
+   modeler = CustomsDataModeler('./datasets/boc_lite_2017_final2.pkl', output_folder='./model_output_0607', nfolds=5,
                                 nrepeats=3, oversampling_ratio=0.6, undersampling_ratio=0.7)
-   modeler.spot_check_models()
+   #modeler.spot_check_models()
+   models = modeler.tune_models()
+   modeler.test_models(models, 'tuning_report_0607.txt', use_validation_dataset=True)
 
