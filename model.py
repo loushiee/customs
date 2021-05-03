@@ -2,13 +2,14 @@ import matplotlib.pyplot as plt
 import os
 import numpy as np
 import pandas as pd
+import pickle
 import random
 import time
 
 # From sklearn
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
-from sklearn.metrics import accuracy_score, balanced_accuracy_score, classification_report, confusion_matrix, f1_score, precision_score, recall_score, roc_auc_score, roc_curve
+from sklearn.metrics import accuracy_score, balanced_accuracy_score, classification_report, confusion_matrix, f1_score, fbeta_score, make_scorer, precision_score, recall_score, roc_auc_score, roc_curve
 from sklearn.model_selection import KFold, cross_validate, GridSearchCV, RepeatedStratifiedKFold, learning_curve, train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import LabelBinarizer, OneHotEncoder, StandardScaler
@@ -123,7 +124,7 @@ class CustomsDataModeler:
                        train_sizes=np.linspace(.1, 1.0, 5), n_jobs=-1):
       print('*** EVALUATE MODELS ***')
       if metrics is None:
-         metrics = ['roc_auc']
+         metrics = 'f1'
 
       plt.rcParams["figure.figsize"] = [max(len(models) * 1.5, 10), 10]
 
@@ -231,10 +232,13 @@ class CustomsDataModeler:
 
    # Perform testing of models using provided test data and target
    def test_models(self, model_list, report_file, use_validation_dataset=False):
+      print(f'*** REPORT FILE: {report_file} ***')
       X = self.X_val if use_validation_dataset else self.X_test
       y = self.y_val if use_validation_dataset else self.y_test
       f = open(f'{self.output_folder}/{report_file}', 'w')
-      f.write("X shape:{} y shape:{}\n\n".format(X.shape, y.shape))
+      f.write(f'X shape:{X.shape} y shape:{y.shape}\n\n')
+      f.write(f'Oversampling ratio: {"None" if self.oversampling_ratio is None else self.oversampling_ratio}\n')
+      f.write(f'Undersampling ratio: {"None" if self.undersampling_ratio is None else self.undersampling_ratio}\n\n')
 
       for i, (name, model) in enumerate(model_list):
          print(f'*** TESTING {name} USING {"VALIDATION" if use_validation_dataset else "TEST"} DATASET ***')
@@ -257,13 +261,13 @@ class CustomsDataModeler:
    def grid_search_model(self, model, param_grid, X, y, metrics=None):
       print('*** GRID SEARCH MODEL ***')
       if metrics is None:
-         metrics = ['f1']
+         metrics = 'f1'
 
       rskf = RepeatedStratifiedKFold(n_splits=self.nfolds)
-      grid = GridSearchCV(estimator=model, param_grid=param_grid, scoring=metrics, cv=rskf, refit=metrics[0],
+      grid = GridSearchCV(estimator=model, param_grid=param_grid, scoring=metrics, cv=rskf,
                           n_jobs=-1, return_train_score=True)
       grid_result = grid.fit(X, y)
-      print(f'Non nested best {metrics[0]} score: {grid_result.best_score_:.3f} using param: {grid_result.best_params_}')
+      print(f'Non nested best score: {grid_result.best_score_:.3f} using param: {grid_result.best_params_}')
       return grid
 
    # Spot check the models for checking the default performance
@@ -285,26 +289,67 @@ class CustomsDataModeler:
                            lcimage_prefix=None)
 
    # Tune top performing models from spot checking
-   def tune_decision_tree(self):
-      # Tune Decision Tree
-      print("*** TUNE Decision Tree ***")
-      param_grid = dict()
-      param_grid['criterion'] = ["gini", "entropy"]
-      param_grid['max_depth'] = [15, 16, 17, 18]
-      param_grid['class_weight'] = ['balanced', None]
-      result = self.grid_search_model(DecisionTreeClassifier(), param_grid, X=self.X_train, y=self.y_train,
-                                      metrics=['f1'])
+   def tune_model(self, model, param_grid, metrics, pickle_file=None):
+      print('*** MODEL ***')
+      print(model)
+      print('*** PARAMETERS ***')
+      print(param_grid)
+      result = self.grid_search_model(model, param_grid, X=self.X_train, y=self.y_train, metrics=metrics)
       print(result.cv_results_)
-      return result.best_estimator_
+      tuned_model = result.best_estimator_
+      if pickle_file is not None:
+         pickle.dump(tuned_model, open(f'{self.output_folder}/{pickle_file}.pkl', 'wb'))
+      return tuned_model
+
+   def tune_decision_tree(self, metrics, pickle_file=None):
+      print("*** TUNE DECISION TREE ***")
+      param_grid = {
+         'criterion': ['gini', 'entropy'],
+         'max_depth': [15, 16, 17, 18],
+         'class_weight': ['balanced', None],
+      }
+      model = DecisionTreeClassifier()
+      return self.tune_model(model, param_grid, metrics, pickle_file)
+
+   def tune_random_forest(self, metrics, pickle_file=None):
+      print("*** TUNE RANDOM FOREST ***")
+      param_grid = {
+         'n_estimators': [100, 150, 200],
+         'max_depth': [20, 30, 40],
+         'max_features': ['auto', 'sqrt'],
+      }
+      model = RandomForestClassifier(criterion='entropy', class_weight='balanced', oob_score=True, random_state=self.rseed)
+      return self.tune_model(model, param_grid, metrics, pickle_file)
+
+   def tune_xgboost(self, metrics, scale_pos_weight=1., pickle_file=None):
+      print("*** TUNE XGBOOST ***")
+      param_grid = {
+         'learning_rate': [0.15, 0.2],
+         'gamma': [0, 1],
+         'max_depth': [15, 20],
+         'min_child_weight': [1, 2],
+      }
+      model = XGBClassifier(scale_pos_weight=scale_pos_weight, tree_method='gpu_hist', objective='binary:logistic',
+                            eval_metric='aucpr', use_label_encoder=False, random_state=self.rseed)
+      return self.tune_model(model, param_grid, metrics, pickle_file)
 
 
 if __name__ == "__main__":
-   modeler = CustomsDataModeler('./datasets/boc_lite_2017_final2.pkl', output_folder='./model_output_0607', nfolds=10,
-                                nrepeats=3, oversampling_ratio=0.5, undersampling_ratio=0.666)
+   oversampling_ratio = 35./65.
+   undersampling_ratio = 4./6.
+   modeler = CustomsDataModeler('./datasets/boc_lite_2017_final2.pkl', output_folder='./model_output',
+                                nfolds=5, nrepeats=3, rseed=12345,
+                                oversampling_ratio=oversampling_ratio, undersampling_ratio=undersampling_ratio)
    #modeler.spot_check_models()
 
+   metric = make_scorer(fbeta_score, beta=2)
    models = list()
-   dt = modeler.tune_decision_tree()
-   models.append(('Decision Tree', dt))
-   modeler.test_models(models, 'tuning_report_dt_val.txt', use_validation_dataset=True)
-
+   # dt = modeler.tune_decision_tree(metrics=metric, pickle_file='decision_tree')
+   # models.append(('Decision Tree', dt))
+   # modeler.test_models(models, 'tuning_report_dt_val.txt', use_validation_dataset=True)
+   # rf = modeler.tune_random_forest(metrics=metric, pickle_file='random_forest')
+   # models.append(('Random Forest', rf))
+   # modeler.test_models(models, 'tuning_report_rf_val17.txt', use_validation_dataset=True)
+   xgb = modeler.tune_xgboost(scale_pos_weight=1./undersampling_ratio, metrics=metric, pickle_file='xgboost')
+   models.append(('XGBoost', xgb))
+   modeler.test_models(models, 'tuning_report_xgb_val4.txt', use_validation_dataset=True)
