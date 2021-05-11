@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import pickle
 import random
+import tensorflow as tf
 import time
 
 # From sklearn
@@ -21,7 +22,9 @@ from sklearn.naive_bayes import GaussianNB
 from sklearn.neural_network import MLPClassifier
 from sklearn.svm import LinearSVC
 from sklearn.tree import DecisionTreeClassifier
-
+# From Keras/Tensorflow
+from tensorflow import keras
+from keras import backend as K
 # Other ML packages
 from xgboost import XGBClassifier
 from imblearn.over_sampling import SMOTENC
@@ -244,11 +247,13 @@ class CustomsDataModeler:
          print(f'*** TESTING {name} USING {"VALIDATION" if use_validation_dataset else "TEST"} DATASET ***')
          start = time.time()
          pred = model.predict(X)
+         pred = np.where(pred > 0.5, 1, 0)
          runtime = time.time() - start
          f.write(f'*** {name} SUMMARY ***\n')
          f.write(f'{name} Model details:\n{model}\n')
          f.write(f'{name} Runtime (ms): {runtime * 1000.:.3f}\n')
          f.write(f'{name} F1: {f1_score(y, pred) * 100.:.3f}\n')
+         f.write(f'{name} F2: {f2_sklearn(y, pred) * 100.:.3f}\n')
          f.write(f'{name} Precision: {precision_score(y, pred) * 100.:.3f}\n')
          f.write(f'{name} Recall: {recall_score(y, pred) * 100.:.3f}\n')
          f.write(f'{name} ROC_AUC: {roc_auc_score(y, pred) * 100.:.3f}\n')
@@ -289,7 +294,7 @@ class CustomsDataModeler:
                            lcimage_prefix=None)
 
    # Tune top performing models from spot checking
-   def tune_model(self, model, param_grid, metrics, pickle_file=None):
+   def tune_sklearn_model(self, model, param_grid, metrics, pickle_file=None):
       print('*** MODEL ***')
       print(model)
       print('*** PARAMETERS ***')
@@ -309,7 +314,7 @@ class CustomsDataModeler:
          'class_weight': ['balanced', None],
       }
       model = DecisionTreeClassifier()
-      return self.tune_model(model, param_grid, metrics, pickle_file)
+      return self.tune_sklearn_model(model, param_grid, metrics, pickle_file)
 
    def tune_random_forest(self, metrics, pickle_file=None):
       print("*** TUNE RANDOM FOREST ***")
@@ -319,7 +324,7 @@ class CustomsDataModeler:
          'max_features': ['auto', 'sqrt'],
       }
       model = RandomForestClassifier(criterion='entropy', class_weight='balanced', oob_score=True, random_state=self.rseed)
-      return self.tune_model(model, param_grid, metrics, pickle_file)
+      return self.tune_sklearn_model(model, param_grid, metrics, pickle_file)
 
    def tune_xgboost(self, metrics, scale_pos_weight=1., pickle_file=None):
       print("*** TUNE XGBOOST ***")
@@ -331,10 +336,56 @@ class CustomsDataModeler:
       }
       model = XGBClassifier(scale_pos_weight=scale_pos_weight, tree_method='gpu_hist', objective='binary:logistic',
                             eval_metric='aucpr', use_label_encoder=False, random_state=self.rseed)
-      return self.tune_model(model, param_grid, metrics, pickle_file)
+      return self.tune_sklearn_model(model, param_grid, metrics, pickle_file)
+
+   def train_neural_network(self, nepochs, class_weight):
+      print("*** TUNE NEURAL NETWORK ***")
+      # Use keras and kerastuner
+      nfeatures = self.X_train.shape[1]
+      nunits = nfeatures * 2
+      nn_in = keras.Input(shape=(nfeatures,), name='Input')
+      regularizer = keras.regularizers.l2(0.001)
+      h1 = keras.layers.Dense(units=nunits, activation='relu', kernel_regularizer=regularizer, name='Hidden_1')(nn_in)
+      h2 = keras.layers.Dense(units=nunits / 2, activation='relu', kernel_regularizer=regularizer, name='Hidden_2')(h1)
+      h3 = keras.layers.Dense(units=nunits / 4, activation='relu', kernel_regularizer=regularizer, name='Hidden_3')(h2)
+      nn_out = keras.layers.Dense(units=1, activation='sigmoid', name='Output')(h3)
+      model = keras.Model(inputs=nn_in, outputs=nn_out)
+      model.compile(
+         optimizer=keras.optimizers.Adam(learning_rate=0.0001),
+         loss=keras.losses.BinaryCrossentropy(),
+         metrics=[keras.metrics.Recall(), f2_keras]
+      )
+      print(model.summary())
+      stop_early = keras.callbacks.EarlyStopping(monitor='val_loss', mode='min', patience=nepochs/10, verbose=1)
+      model.fit(x=self.X_train, y=self.y_train, epochs=nepochs, validation_data=(self.X_val, self.y_val),
+                class_weight=class_weight, batch_size=256, callbacks=[stop_early])
+      return model
+
+
+# Utility functions for computing F2 score
+def f2_sklearn(y_true, y_pred):
+   return fbeta_score(y_true, y_pred, beta=2)
+
+
+def f2_keras(y_true, y_pred):
+   def recall(y_t, y_p):
+      true_positives = K.sum(K.round(K.clip(y_t * y_p, 0, 1)))
+      possible_positives = K.sum(K.round(K.clip(y_t, 0, 1)))
+      return (true_positives + K.epsilon()) / (possible_positives + K.epsilon())
+
+   def precision(y_t, y_p):
+      true_positives = K.sum(K.round(K.clip(y_t * y_p, 0, 1)))
+      predicted_positives = K.sum(K.round(K.clip(y_p, 0, 1)))
+      return (true_positives + K.epsilon()) / (predicted_positives + K.epsilon())
+
+   p = precision(y_true, y_pred)
+   r = recall(y_true, y_pred)
+   return 5 * ((p * r) / ((4 * p) + r + K.epsilon()))
 
 
 if __name__ == "__main__":
+   print("Num GPUs Available: ", len(tf.config.list_physical_devices('GPU')))
+
    oversampling_ratio = 35./65.
    undersampling_ratio = 4./6.
    modeler = CustomsDataModeler('./datasets/boc_lite_2017_final2.pkl', output_folder='./model_output',
@@ -349,7 +400,11 @@ if __name__ == "__main__":
    # modeler.test_models(models, 'tuning_report_dt_val.txt', use_validation_dataset=True)
    # rf = modeler.tune_random_forest(metrics=metric, pickle_file='random_forest')
    # models.append(('Random Forest', rf))
-   # modeler.test_models(models, 'tuning_report_rf_val17.txt', use_validation_dataset=True)
-   xgb = modeler.tune_xgboost(scale_pos_weight=1./undersampling_ratio, metrics=metric, pickle_file='xgboost')
-   models.append(('XGBoost', xgb))
-   modeler.test_models(models, 'tuning_report_xgb_val4.txt', use_validation_dataset=True)
+   # modeler.test_models(models, 'tuning_report_rf_val.txt', use_validation_dataset=True)
+   # xgb = modeler.tune_xgboost(scale_pos_weight=1./undersampling_ratio, metrics=metric, pickle_file='xgboost')
+   # models.append(('XGBoost', xgb))
+   # modeler.test_models(models, 'tuning_report_xgb_val.txt', use_validation_dataset=True)
+   nn = modeler.train_neural_network(nepochs=1000, class_weight={0: 2, 1: 3})
+   models.append(('Neural Network', nn))
+   modeler.test_models(models, 'tuning_report_nn_val.txt', use_validation_dataset=True)
+   modeler.test_models(models, 'tuning_report_nn_test.txt', use_validation_dataset=False)
