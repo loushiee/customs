@@ -338,27 +338,29 @@ class CustomsDataModeler:
                             eval_metric='aucpr', use_label_encoder=False, random_state=self.rseed)
       return self.tune_sklearn_model(model, param_grid, metrics, pickle_file)
 
-   def train_neural_network(self, nepochs, class_weight):
+   def train_neural_network(self, nepochs, class_weight, h5_file):
       print("*** TUNE NEURAL NETWORK ***")
       # Use keras and kerastuner
       nfeatures = self.X_train.shape[1]
-      nunits = nfeatures * 2
       nn_in = keras.Input(shape=(nfeatures,), name='Input')
-      regularizer = keras.regularizers.l2(0.001)
-      h1 = keras.layers.Dense(units=nunits, activation='relu', kernel_regularizer=regularizer, name='Hidden_1')(nn_in)
-      h2 = keras.layers.Dense(units=nunits / 2, activation='relu', kernel_regularizer=regularizer, name='Hidden_2')(h1)
-      h3 = keras.layers.Dense(units=nunits / 4, activation='relu', kernel_regularizer=regularizer, name='Hidden_3')(h2)
-      nn_out = keras.layers.Dense(units=1, activation='sigmoid', name='Output')(h3)
+      regularizer = keras.regularizers.l2(0.02)
+      dense1 = keras.layers.Dense(units=nfeatures, activation='relu', kernel_regularizer=regularizer)(nn_in)
+      dense2 = keras.layers.Dense(units=nfeatures/2, activation='relu', kernel_regularizer=regularizer)(dense1)
+      dense3 = keras.layers.Dense(units=nfeatures/4, activation='relu', kernel_regularizer=regularizer)(dense2)
+      nn_out = keras.layers.Dense(units=1, activation='sigmoid', name='Output')(dense3)
       model = keras.Model(inputs=nn_in, outputs=nn_out)
       model.compile(
-         optimizer=keras.optimizers.Adam(learning_rate=0.0001),
+         optimizer=keras.optimizers.Adam(learning_rate=0.001),
          loss=keras.losses.BinaryCrossentropy(),
-         metrics=[keras.metrics.Recall(), f2_keras]
+         metrics=[keras.metrics.Recall(), keras.metrics.Precision()]
       )
       print(model.summary())
       stop_early = keras.callbacks.EarlyStopping(monitor='val_loss', mode='min', patience=nepochs/10, verbose=1)
+      check_point = keras.callbacks.ModelCheckpoint(f'{self.output_folder}/{h5_file}.h5', monitor='val_recall',
+                                                    mode='max', save_best_only=True, verbose=1)
       model.fit(x=self.X_train, y=self.y_train, epochs=nepochs, validation_data=(self.X_val, self.y_val),
-                class_weight=class_weight, batch_size=256, callbacks=[stop_early])
+                class_weight=class_weight, batch_size=256, callbacks=[stop_early, check_point])
+      model = keras.models.load_model(f'{self.output_folder}/{h5_file}.h5')
       return model
 
 
@@ -389,22 +391,20 @@ if __name__ == "__main__":
    oversampling_ratio = 35./65.
    undersampling_ratio = 4./6.
    modeler = CustomsDataModeler('./datasets/boc_lite_2017_final2.pkl', output_folder='./model_output',
-                                nfolds=5, nrepeats=3, rseed=12345,
+                                nfolds=5, nrepeats=3, rseed=123456,
                                 oversampling_ratio=oversampling_ratio, undersampling_ratio=undersampling_ratio)
-   #modeler.spot_check_models()
+   modeler.spot_check_models()
 
+   # Create final models using the best ones from spot checking: Decision Tree, Random Forest, XGBoost and Neural Network
    metric = make_scorer(fbeta_score, beta=2)
    models = list()
-   # dt = modeler.tune_decision_tree(metrics=metric, pickle_file='decision_tree')
-   # models.append(('Decision Tree', dt))
-   # modeler.test_models(models, 'tuning_report_dt_val.txt', use_validation_dataset=True)
-   # rf = modeler.tune_random_forest(metrics=metric, pickle_file='random_forest')
-   # models.append(('Random Forest', rf))
-   # modeler.test_models(models, 'tuning_report_rf_val.txt', use_validation_dataset=True)
-   # xgb = modeler.tune_xgboost(scale_pos_weight=1./undersampling_ratio, metrics=metric, pickle_file='xgboost')
-   # models.append(('XGBoost', xgb))
-   # modeler.test_models(models, 'tuning_report_xgb_val.txt', use_validation_dataset=True)
-   nn = modeler.train_neural_network(nepochs=1000, class_weight={0: 2, 1: 3})
+   dt = modeler.tune_decision_tree(metrics=metric, pickle_file='decision_tree')
+   models.append(('Decision Tree', dt))
+   rf = modeler.tune_random_forest(metrics=metric, pickle_file='random_forest')
+   models.append(('Random Forest', rf))
+   xgb = modeler.tune_xgboost(scale_pos_weight=1./undersampling_ratio, metrics=metric, pickle_file='xgboost')
+   models.append(('XGBoost', xgb))
+   nn = modeler.train_neural_network(nepochs=1000, class_weight={0: 4, 1: 5}, h5_file='neural_network')
    models.append(('Neural Network', nn))
-   modeler.test_models(models, 'tuning_report_nn_val.txt', use_validation_dataset=True)
-   modeler.test_models(models, 'tuning_report_nn_test.txt', use_validation_dataset=False)
+   modeler.test_models(models, 'model_report_val.txt', use_validation_dataset=True)
+   modeler.test_models(models, 'model_report_test.txt', use_validation_dataset=False)
