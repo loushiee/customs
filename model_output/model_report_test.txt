@@ -1,0 +1,112 @@
+X shape:(16764, 41) y shape:(16764,)
+
+Oversampling ratio: 0.5384615384615384
+Undersampling ratio: 0.6666666666666666
+
+*** Decision Tree SUMMARY ***
+Decision Tree Model details:
+DecisionTreeClassifier(class_weight='balanced', max_depth=15)
+Decision Tree Runtime (ms): 3.344
+Decision Tree F1: 63.834
+Decision Tree F2: 69.533
+Decision Tree Precision: 56.162
+Decision Tree Recall: 73.934
+Decision Tree ROC_AUC: 79.753
+Decision Tree Balanced Accuracy: 79.753
+Decision Tree Accuracy: 83.244
+Decision Tree Confusion matrix:
+[[11476  1935]
+ [  874  2479]]
+Decision Tree Classification report:
+              precision    recall  f1-score   support
+
+           0       0.93      0.86      0.89     13411
+           1       0.56      0.74      0.64      3353
+
+    accuracy                           0.83     16764
+   macro avg       0.75      0.80      0.76     16764
+weighted avg       0.86      0.83      0.84     16764
+
+*** Random Forest SUMMARY ***
+Random Forest Model details:
+RandomForestClassifier(class_weight='balanced', criterion='entropy',
+                       max_depth=20, n_estimators=200, oob_score=True,
+                       random_state=123456)
+Random Forest Runtime (ms): 455.340
+Random Forest F1: 69.514
+Random Forest F2: 71.878
+Random Forest Precision: 65.901
+Random Forest Recall: 73.546
+Random Forest ROC_AUC: 82.016
+Random Forest Balanced Accuracy: 82.016
+Random Forest Accuracy: 87.097
+Random Forest Confusion matrix:
+[[12135  1276]
+ [  887  2466]]
+Random Forest Classification report:
+              precision    recall  f1-score   support
+
+           0       0.93      0.90      0.92     13411
+           1       0.66      0.74      0.70      3353
+
+    accuracy                           0.87     16764
+   macro avg       0.80      0.82      0.81     16764
+weighted avg       0.88      0.87      0.87     16764
+
+*** XGBoost SUMMARY ***
+XGBoost Model details:
+XGBClassifier(base_score=0.5, booster='gbtree', colsample_bylevel=1,
+              colsample_bynode=1, colsample_bytree=1, eval_metric='aucpr',
+              gamma=0, gpu_id=0, importance_type='gain',
+              interaction_constraints='', learning_rate=0.15, max_delta_step=0,
+              max_depth=15, min_child_weight=2, missing=nan,
+              monotone_constraints='()', n_estimators=100, n_jobs=12,
+              num_parallel_tree=1, random_state=123456, reg_alpha=0,
+              reg_lambda=1, scale_pos_weight=1.5, subsample=1,
+              tree_method='gpu_hist', use_label_encoder=False,
+              validate_parameters=1, verbosity=None)
+XGBoost Runtime (ms): 15.193
+XGBoost F1: 70.682
+XGBoost F2: 71.833
+XGBoost Precision: 68.844
+XGBoost Recall: 72.622
+XGBoost ROC_AUC: 82.202
+XGBoost Balanced Accuracy: 82.202
+XGBoost Accuracy: 87.950
+XGBoost Confusion matrix:
+[[12309  1102]
+ [  918  2435]]
+XGBoost Classification report:
+              precision    recall  f1-score   support
+
+           0       0.93      0.92      0.92     13411
+           1       0.69      0.73      0.71      3353
+
+    accuracy                           0.88     16764
+   macro avg       0.81      0.82      0.82     16764
+weighted avg       0.88      0.88      0.88     16764
+
+*** Neural Network SUMMARY ***
+Neural Network Model details:
+<tensorflow.python.keras.engine.functional.Functional object at 0x7fd08d547a00>
+Neural Network Runtime (ms): 233.967
+Neural Network F1: 52.286
+Neural Network F2: 65.854
+Neural Network Precision: 38.921
+Neural Network Recall: 79.630
+Neural Network ROC_AUC: 74.194
+Neural Network Balanced Accuracy: 74.194
+Neural Network Accuracy: 70.932
+Neural Network Confusion matrix:
+[[9221 4190]
+ [ 683 2670]]
+Neural Network Classification report:
+              precision    recall  f1-score   support
+
+           0       0.93      0.69      0.79     13411
+           1       0.39      0.80      0.52      3353
+
+    accuracy                           0.71     16764
+   macro avg       0.66      0.74      0.66     16764
+weighted avg       0.82      0.71      0.74     16764
+

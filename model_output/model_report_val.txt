@@ -1,0 +1,112 @@
+X shape:(8382, 41) y shape:(8382,)
+
+Oversampling ratio: 0.5384615384615384
+Undersampling ratio: 0.6666666666666666
+
+*** Decision Tree SUMMARY ***
+Decision Tree Model details:
+DecisionTreeClassifier(class_weight='balanced', max_depth=15)
+Decision Tree Runtime (ms): 1.690
+Decision Tree F1: 63.348
+Decision Tree F2: 68.950
+Decision Tree Precision: 55.793
+Decision Tree Recall: 73.270
+Decision Tree ROC_AUC: 79.380
+Decision Tree Balanced Accuracy: 79.380
+Decision Tree Accuracy: 83.047
+Decision Tree Confusion matrix:
+[[5733  973]
+ [ 448 1228]]
+Decision Tree Classification report:
+              precision    recall  f1-score   support
+
+           0       0.93      0.85      0.89      6706
+           1       0.56      0.73      0.63      1676
+
+    accuracy                           0.83      8382
+   macro avg       0.74      0.79      0.76      8382
+weighted avg       0.85      0.83      0.84      8382
+
+*** Random Forest SUMMARY ***
+Random Forest Model details:
+RandomForestClassifier(class_weight='balanced', criterion='entropy',
+                       max_depth=20, n_estimators=200, oob_score=True,
+                       random_state=123456)
+Random Forest Runtime (ms): 231.345
+Random Forest F1: 69.640
+Random Forest F2: 71.429
+Random Forest Precision: 66.850
+Random Forest Recall: 72.673
+Random Forest ROC_AUC: 81.833
+Random Forest Balanced Accuracy: 81.833
+Random Forest Accuracy: 87.330
+Random Forest Confusion matrix:
+[[6102  604]
+ [ 458 1218]]
+Random Forest Classification report:
+              precision    recall  f1-score   support
+
+           0       0.93      0.91      0.92      6706
+           1       0.67      0.73      0.70      1676
+
+    accuracy                           0.87      8382
+   macro avg       0.80      0.82      0.81      8382
+weighted avg       0.88      0.87      0.88      8382
+
+*** XGBoost SUMMARY ***
+XGBoost Model details:
+XGBClassifier(base_score=0.5, booster='gbtree', colsample_bylevel=1,
+              colsample_bynode=1, colsample_bytree=1, eval_metric='aucpr',
+              gamma=0, gpu_id=0, importance_type='gain',
+              interaction_constraints='', learning_rate=0.15, max_delta_step=0,
+              max_depth=15, min_child_weight=2, missing=nan,
+              monotone_constraints='()', n_estimators=100, n_jobs=12,
+              num_parallel_tree=1, random_state=123456, reg_alpha=0,
+              reg_lambda=1, scale_pos_weight=1.5, subsample=1,
+              tree_method='gpu_hist', use_label_encoder=False,
+              validate_parameters=1, verbosity=None)
+XGBoost Runtime (ms): 6.636
+XGBoost F1: 70.904
+XGBoost F2: 72.270
+XGBoost Precision: 68.739
+XGBoost Recall: 73.210
+XGBoost ROC_AUC: 82.445
+XGBoost Balanced Accuracy: 82.445
+XGBoost Accuracy: 87.986
+XGBoost Confusion matrix:
+[[6148  558]
+ [ 449 1227]]
+XGBoost Classification report:
+              precision    recall  f1-score   support
+
+           0       0.93      0.92      0.92      6706
+           1       0.69      0.73      0.71      1676
+
+    accuracy                           0.88      8382
+   macro avg       0.81      0.82      0.82      8382
+weighted avg       0.88      0.88      0.88      8382
+
+*** Neural Network SUMMARY ***
+Neural Network Model details:
+<tensorflow.python.keras.engine.functional.Functional object at 0x7fd08d547a00>
+Neural Network Runtime (ms): 181.217
+Neural Network F1: 53.539
+Neural Network F2: 67.123
+Neural Network Precision: 40.035
+Neural Network Recall: 80.788
+Neural Network ROC_AUC: 75.273
+Neural Network Balanced Accuracy: 75.273
+Neural Network Accuracy: 71.964
+Neural Network Confusion matrix:
+[[4678 2028]
+ [ 322 1354]]
+Neural Network Classification report:
+              precision    recall  f1-score   support
+
+           0       0.94      0.70      0.80      6706
+           1       0.40      0.81      0.54      1676
+
+    accuracy                           0.72      8382
+   macro avg       0.67      0.75      0.67      8382
+weighted avg       0.83      0.72      0.75      8382
+
