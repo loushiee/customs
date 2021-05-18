@@ -10,7 +10,7 @@ import time
 # From sklearn
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
-from sklearn.metrics import accuracy_score, balanced_accuracy_score, classification_report, confusion_matrix, f1_score, fbeta_score, make_scorer, precision_score, recall_score, roc_auc_score, roc_curve
+from sklearn.metrics import accuracy_score, balanced_accuracy_score, classification_report, confusion_matrix, f1_score, fbeta_score, make_scorer, precision_score, recall_score, roc_auc_score
 from sklearn.model_selection import KFold, cross_validate, GridSearchCV, RepeatedStratifiedKFold, learning_curve, train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import LabelBinarizer, OneHotEncoder, StandardScaler
@@ -339,8 +339,7 @@ class CustomsDataModeler:
       return self.tune_sklearn_model(model, param_grid, metrics, pickle_file)
 
    def train_neural_network(self, nepochs, class_weight, h5_file):
-      print("*** TUNE NEURAL NETWORK ***")
-      # Use keras and kerastuner
+      print("*** TRAIN NEURAL NETWORK ***")
       nfeatures = self.X_train.shape[1]
       nn_in = keras.Input(shape=(nfeatures,), name='Input')
       regularizer = keras.regularizers.l2(0.02)
@@ -388,6 +387,7 @@ def f2_keras(y_true, y_pred):
 if __name__ == "__main__":
    print("Num GPUs Available: ", len(tf.config.list_physical_devices('GPU')))
 
+   # Perform over sampling of minority class (fraud) and undersampling of majority class (non-fraud)
    oversampling_ratio = 35./65.
    undersampling_ratio = 4./6.
    modeler = CustomsDataModeler('./datasets/boc_lite_2017_final2.pkl', output_folder='./model_output',
